@@ -56,9 +56,11 @@ int smlIndex; //index counter within smlMessage array
 int startIndex; //start index for start sequence search
 int stopIndex; //start index for stop sequence search
 int stage; //index to maneuver through cases
+int powerbytes; //number of bytes containing power sequence
+int deliverbytes; //number of bytes containing delivered sequence
 byte power[8]; //array that holds the extracted 4 byte "Wirkleistung" value
 byte consumption[8]; //array that holds the extracted 4 byte "Gesamtverbrauch" value
-byte delivered[1];
+byte delivered[8];
 byte uptime[8];
 unsigned long uptimeTotal;
 unsigned long deliveredTotal;
@@ -73,7 +75,7 @@ SoftwareSerial MeterSerial(pin_d2, 3, true); // RX, TX, inverted mode(!)
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-// #define _debug_msg
+//#define _debug_msg
 
 void setup() {
   // bring up serial ports
@@ -193,7 +195,9 @@ void findPowerSequence() {
       startIndex++;
       if (startIndex == sizeof(powerSequence)) //in complete sequence is found
       {
-        for (int y = 0; y < 3; y++) { //read the next 2 bytes (the actual power value)
+        // find number of bytes for power sequence since this is dynamically
+        powerbytes = (smlMessage[x + 7] & 0x0F);
+        for (int y = 0; y < powerbytes; y++) { //read the next 2 bytes (the actual power value)
           power[y] = smlMessage[x + y + 8]; //store into power array
 #ifdef _debug_msg
           Serial.print(String(power[y], HEX));
@@ -211,7 +215,11 @@ void findPowerSequence() {
       startIndex = 0;
     }
   }
-  currentpower = (power[0] << 8 | power[1] << 0); //merge 2 bytes into single variable to calculate power value
+  if (powerbytes == 3){
+    currentpower = (power[0] << 8 | power[1] << 0); //merge 2 bytes into single variable to calculate power value
+  }else if (powerbytes == 2){
+    currentpower = power[0];  
+    }
 }
 
 void findConsumptionSequence() {
@@ -274,8 +282,9 @@ void findDeliveredSequence() {
     if (temp == deliveredSequence[startIndex]) {
     startIndex++;
     if (startIndex == sizeof(deliveredSequence)) {
-        for (int y = 0; y < 1; y++) {
-          delivered[y] = smlMessage[x + y + 1];
+      deliverbytes = (smlMessage[x + 14] & 0x0F);
+        for (int y = 0; y < deliverbytes; y++) {
+          delivered[y] = smlMessage[x + y + 15];
         }
         startIndex = 0;
         stage = 5;
@@ -285,7 +294,11 @@ void findDeliveredSequence() {
     }
   }
   // maybe the value extends when power is delivered to grid(?)
-  deliveredTotal = delivered[0];
+  if (deliverbytes == 3){
+    deliveredTotal = (delivered[0] << 8 | delivered[1] << 0); //merge 2 bytes into single variable to calculate power value
+  }else if (deliverbytes == 2){
+    deliveredTotal = delivered[0];  
+    }
 }
 
 void findUptime() {
