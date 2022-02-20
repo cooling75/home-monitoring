@@ -2,7 +2,7 @@
 /*
     Application note: Read a Holley DTZ541-ZEBA (2021) electricity meter via
     phototransistor + 1k resistor interface and SML protocol
-    Version 1.1
+    Version 1.2
     Copyright (C) 2022  Jan Laudahn https://laudart.de
 
     credits:
@@ -32,15 +32,13 @@
 #include <PubSubClient.h>
 #include <SoftwareSerial.h>
 
-// MQTT
+// WiFi and MQTT
 const char* SSID = "";
 const char* PSK = "";
 const char* MQTT_BROKER = "";
 
 String tmpStr;
-char publishValue[10];
-
-char ipAddrPub[15];
+char publishValue[20];
 
 // DATA
 byte inByte; //byte to store the serial buffer
@@ -78,9 +76,12 @@ PubSubClient client(espClient);
 //#define _debug_msg
 
 void setup() {
+  tmpStr.reserve(20);
   // bring up serial ports
   Serial.begin(115200);   // debug via USB
   MeterSerial.begin(9600);  // meter via RS485
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  WiFi.mode(WIFI_STA);
   setup_wifi();
   client.setServer(MQTT_BROKER, 1883);
   Serial.println("Waiting for data");
@@ -90,18 +91,11 @@ void setup_wifi() {
   WiFi.begin(SSID, PSK);
 
   while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
     delay(100);
   }
 
   Serial.println(WiFi.localIP());
-}
-
-String IpAddress2String(const IPAddress& ipAddress)
-{
-  return String(ipAddress[0]) + String(".") +
-         String(ipAddress[1]) + String(".") +
-         String(ipAddress[2]) + String(".") +
-         String(ipAddress[3]);
 }
 
 void loop() {
@@ -309,11 +303,15 @@ void findUptime() {
     if (temp == uptimeSequence[startIndex]) {
       startIndex++;
       if (startIndex == sizeof(uptimeSequence)) {
+#ifdef _debug_msg
         Serial.print("Uptime (bytes): ");
+#endif
         for (int y = 0; y < 4; y++) {
           uptime[y] = smlMessage[x + y + 5];
+#ifdef _debug_msg
           Serial.print(String(uptime[y], HEX));
           Serial.print(" ");
+#endif
         }
         startIndex = 0;
         stage = 6;
@@ -356,24 +354,35 @@ void publishMessage() {
   Serial.print(uptimeTotalDays);
   Serial.println(" days");
 #endif
-  
-  // start MQTT
+
+
+  // check WiFi connection
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WLAN disconnected, trigger reconnect.");
+    WiFi.disconnect();
+    setup_wifi();
+    }
+  // check MQTT
   if (!client.connected()) {
+    Serial.println("MQTT disconnected, trigger reconnect.");
+    // Create a random client ID
+    String clientId = "ESP8266-Strom-";
+    clientId += String(random(0xffff), HEX);
     while (!client.connected()) {
-      client.connect("ESP8266Client");
+      client.connect(clientId.c_str());
+      Serial.print(".");
       delay(100);
     }
   }
 
   client.loop();
+  
 #ifndef _msg_debug
   client.publish("/home/commodity/electricity/consumedDeciWatt", int2charArray(currentconsumption));
   client.publish("/home/commodity/electricity/deliveredkwh", int2charArray(deliveredTotal));
   client.publish("/home/commodity/electricity/currentWatt", int2charArray(currentpower));
   client.publish("/home/commodity/electricity/uptime", int2charArray(uptimeTotal));
-  // tmpStr = IpAddress2String(WiFi.localIP());
-  // tmpStr.toCharArray(ipAddrPub, 15);
-  // client.publish("/home/commodity/electricity/ip", ipAddrPub);
+  client.publish("/home/commodity/electricity/freeheap", int2charArray(ESP.getFreeHeap()));
 #endif
 
   // clear the buffers
@@ -390,6 +399,7 @@ void publishMessage() {
 char* int2charArray(const unsigned long value){
   tmpStr = "";
   tmpStr += value;
-  tmpStr.toCharArray(publishValue, 10);
+  tmpStr.toCharArray(publishValue, tmpStr.length()+1);
+  tmpStr = "";
   return publishValue;
   }
