@@ -2,7 +2,7 @@
 /*
     Application note: Read a Holley DTZ541-ZEBA (2021) electricity meter via
     phototransistor + 1k resistor interface and SML protocol
-    Version 1.2
+    Version 1.3
     Copyright (C) 2022  Jan Laudahn https://laudart.de
 
     credits:
@@ -29,8 +29,9 @@
 */
 
 #include <ESP8266WiFi.h>
-#include <PubSubClient.h>
+//#include <PubSubClient.h>
 #include <SoftwareSerial.h>
+#include <MQTTPubSubClient.h>
 
 // WiFi and MQTT
 const char* SSID = "";
@@ -71,7 +72,8 @@ int pin_d2 = 4;
 
 SoftwareSerial MeterSerial(pin_d2, 3, true); // RX, TX, inverted mode(!)
 WiFiClient espClient;
-PubSubClient client(espClient);
+//PubSubClient client(espClient);
+MQTTPubSubClient client;
 
 //#define _debug_msg
 
@@ -82,19 +84,33 @@ void setup() {
   MeterSerial.begin(9600);  // meter via RS485
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
   WiFi.mode(WIFI_STA);
+
+  // static ip config
+  IPAddress ip(192, 168, 0, 5);
+  IPAddress dns(192, 168, 0, 1);
+  IPAddress gateway(192, 168, 0, 1);
+  IPAddress subnet(255, 255, 255, 0);
+  WiFi.config(ip, dns, gateway, subnet);
+
   setup_wifi();
-  client.setServer(MQTT_BROKER, 1883);
+  //client.setServer(MQTT_BROKER, 1883);
+  // new lib testing
+  espClient.connect(MQTT_BROKER, 1883);
+  client.begin(espClient);
+  client.connect("ESP-Strom", "public", "public");
   Serial.println("Waiting for data");
 }
 
 void setup_wifi() {
+  // connect to Wifi
+  Serial.println("Connecting to WiFi...");
   WiFi.begin(SSID, PSK);
 
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print(".");
     delay(100);
   }
-
+  Serial.println(" connected!");
   Serial.println(WiFi.localIP());
 }
 
@@ -209,11 +225,11 @@ void findPowerSequence() {
       startIndex = 0;
     }
   }
-  if (powerbytes == 3){
+  if (powerbytes == 3) {
     currentpower = (power[0] << 8 | power[1] << 0); //merge 2 bytes into single variable to calculate power value
-  }else if (powerbytes == 2){
-    currentpower = power[0];  
-    }
+  } else if (powerbytes == 2) {
+    currentpower = power[0];
+  }
 }
 
 void findConsumptionSequence() {
@@ -274,9 +290,9 @@ void findDeliveredSequence() {
   for (int x = 0; x < sizeof(smlMessage); x++) {
     temp = smlMessage[x];
     if (temp == deliveredSequence[startIndex]) {
-    startIndex++;
-    if (startIndex == sizeof(deliveredSequence)) {
-      deliverbytes = (smlMessage[x + 14] & 0x0F);
+      startIndex++;
+      if (startIndex == sizeof(deliveredSequence)) {
+        deliverbytes = (smlMessage[x + 14] & 0x0F);
         for (int y = 0; y < deliverbytes; y++) {
           delivered[y] = smlMessage[x + y + 15];
         }
@@ -288,11 +304,11 @@ void findDeliveredSequence() {
     }
   }
   // maybe the value extends when power is delivered to grid(?)
-  if (deliverbytes == 3){
+  if (deliverbytes == 3) {
     deliveredTotal = (delivered[0] << 8 | delivered[1] << 0); //merge 2 bytes into single variable to calculate power value
-  }else if (deliverbytes == 2){
-    deliveredTotal = delivered[0];  
-    }
+  } else if (deliverbytes == 2) {
+    deliveredTotal = delivered[0];
+  }
 }
 
 void findUptime() {
@@ -361,22 +377,19 @@ void publishMessage() {
     Serial.println("WLAN disconnected, trigger reconnect.");
     WiFi.disconnect();
     setup_wifi();
-    }
-  // check MQTT
-  if (!client.connected()) {
+  }
+
+  // check MQTT connection with update
+  if (!client.update()) {
     Serial.println("MQTT disconnected, trigger reconnect.");
-    // Create a random client ID
-    String clientId = "ESP8266-Strom-";
-    clientId += String(random(0xffff), HEX);
-    while (!client.connected()) {
-      client.connect(clientId.c_str());
-      Serial.print(".");
-      delay(100);
+    if (!client.connect("ESP-Strom", "public", "public")) {
+      ESP.reset();
     }
   }
 
-  client.loop();
-  
+  // debug output
+  Serial.println(currentconsumption);
+
 #ifndef _msg_debug
   client.publish("/home/commodity/electricity/consumedDeciWatt", int2charArray(currentconsumption));
   client.publish("/home/commodity/electricity/deliveredkwh", int2charArray(deliveredTotal));
@@ -396,10 +409,10 @@ void publishMessage() {
   stage = 0; // start over
 }
 
-char* int2charArray(const unsigned long value){
+char* int2charArray(const unsigned long value) {
   tmpStr = "";
   tmpStr += value;
-  tmpStr.toCharArray(publishValue, tmpStr.length()+1);
+  tmpStr.toCharArray(publishValue, tmpStr.length() + 1);
   tmpStr = "";
   return publishValue;
-  }
+}
