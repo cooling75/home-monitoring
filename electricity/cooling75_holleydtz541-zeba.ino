@@ -2,7 +2,7 @@
 /*
     Application note: Read a Holley DTZ541-ZEBA (2021) electricity meter via
     phototransistor + 1k resistor interface and SML protocol
-    Version 1.3
+    Version 1.4
     Copyright (C) 2022  Jan Laudahn https://laudart.de
 
     credits:
@@ -63,7 +63,7 @@ byte delivered[8];
 byte uptime[8];
 unsigned long uptimeTotal;
 unsigned long deliveredTotal;
-unsigned long currentpower; //variable to hold translated "Wirkleistung" value
+signed long currentpower; //variable to hold translated "Wirkleistung" value
 unsigned long currentconsumption; //variable to hold translated "Gesamtverbrauch" value
 float currentconsumptionkWh; //variable to calulate actual "Gesamtverbrauch" in kWh
 float uptimeTotalDays; // uptime in days
@@ -76,6 +76,7 @@ WiFiClient espClient;
 MQTTPubSubClient client;
 
 //#define _debug_msg
+// #define _debug_sml
 
 void setup() {
   tmpStr.reserve(20);
@@ -115,6 +116,8 @@ void setup_wifi() {
 }
 
 void loop() {
+  yield();
+  client.update();
   switch (stage) {
     case 0:
       findStartSequence(); // look for start sequence
@@ -136,15 +139,24 @@ void loop() {
       break;
     case 6:
       publishMessage(); // send out via MQQTT
-      // delay(5000); // send out data max. every 5 seconds
       break;
   }
 }
 
+void debug_sml() {
+  for (int x = 0; x < sizeof(smlMessage); x++) {
+    Serial.print(smlMessage[x], HEX);
+    Serial.print(" ");
+  }
+  // show complete sml message every 20 seconds
+  delay(20000);
+}
 
 void findStartSequence() {
   while (MeterSerial.available())
   {
+    yield();
+    client.update();
     inByte = MeterSerial.read(); //read serial buffer into array
 
     if (inByte == startSequence[startIndex]) //in case byte in array matches the start sequence at position 0,1,2...
@@ -167,11 +179,11 @@ void findStartSequence() {
   }
 }
 
-
-
 void findStopSequence() {
   while (MeterSerial.available())
   {
+    yield();
+    client.update();
     inByte = MeterSerial.read();
     smlMessage[smlIndex] = inByte;
     smlIndex++;
@@ -197,7 +209,6 @@ void findStopSequence() {
 void findPowerSequence() {
   byte temp; //temp variable to store loop search data
   startIndex = 0; //start at position 0 of exctracted SML message
-
   for (int x = 0; x < sizeof(smlMessage); x++) { //for as long there are element in the exctracted SML message
     temp = smlMessage[x]; //set temp variable to 0,1,2 element in extracted SML message
     if (temp == powerSequence[startIndex]) //compare with power sequence
@@ -207,7 +218,7 @@ void findPowerSequence() {
       {
         // find number of bytes for power sequence since this is dynamically
         powerbytes = (smlMessage[x + 7] & 0x0F);
-        for (int y = 0; y < powerbytes; y++) { //read the next 2 bytes (the actual power value)
+        for (int y = 0; y < powerbytes; y++) { //read the next byte(s) (the actual power value)
           power[y] = smlMessage[x + y + 8]; //store into power array
 #ifdef _debug_msg
           Serial.print(String(power[y], HEX));
@@ -234,7 +245,6 @@ void findPowerSequence() {
 
 void findConsumptionSequence() {
   byte temp;
-
   startIndex = 0;
   for (int x = 0; x < sizeof(smlMessage); x++) {
     temp = smlMessage[x];
@@ -281,7 +291,6 @@ void findConsumptionSequence() {
 
   // scale 10⁻1 and unit is Wh => factor 10.000 for kWh
   currentconsumptionkWh = (float)currentconsumption / 10000;
-
 }
 
 void findDeliveredSequence() {
@@ -371,6 +380,9 @@ void publishMessage() {
   Serial.println(" days");
 #endif
 
+#ifdef _debug_sml
+  debug_sml();
+#endif
 
   // check WiFi connection
   if (WiFi.status() != WL_CONNECTED) {
@@ -390,13 +402,11 @@ void publishMessage() {
   // debug output
   Serial.println(currentconsumption);
 
-#ifndef _msg_debug
   client.publish("/home/commodity/electricity/consumedDeciWatt", int2charArray(currentconsumption));
   client.publish("/home/commodity/electricity/deliveredkwh", int2charArray(deliveredTotal));
   client.publish("/home/commodity/electricity/currentWatt", int2charArray(currentpower));
   client.publish("/home/commodity/electricity/uptime", int2charArray(uptimeTotal));
   client.publish("/home/commodity/electricity/freeheap", int2charArray(ESP.getFreeHeap()));
-#endif
 
   // clear the buffers
   memset(smlMessage, 0, sizeof(smlMessage));
