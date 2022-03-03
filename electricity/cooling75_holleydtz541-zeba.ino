@@ -2,7 +2,7 @@
 /*
     Application note: Read a Holley DTZ541-ZEBA (2021) electricity meter via
     phototransistor + 1k resistor interface and SML protocol
-    Version 1.4
+    Version 1.5
     Copyright (C) 2022  Jan Laudahn https://laudart.de
 
     credits:
@@ -63,7 +63,7 @@ byte delivered[8];
 byte uptime[8];
 unsigned long uptimeTotal;
 unsigned long deliveredTotal;
-signed long currentpower; //variable to hold translated "Wirkleistung" value
+signed short currentpower; //variable to hold translated "Wirkleistung" value
 unsigned long currentconsumption; //variable to hold translated "Gesamtverbrauch" value
 float currentconsumptionkWh; //variable to calulate actual "Gesamtverbrauch" in kWh
 float uptimeTotalDays; // uptime in days
@@ -75,7 +75,7 @@ WiFiClient espClient;
 //PubSubClient client(espClient);
 MQTTPubSubClient client;
 
-//#define _debug_msg
+// #define _debug_msg
 // #define _debug_sml
 
 void setup() {
@@ -86,8 +86,8 @@ void setup() {
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
   WiFi.mode(WIFI_STA);
 
-  // static ip config
-  IPAddress ip(192, 168, 0, 5);
+  // static ip configuration
+  IPAddress ip(192, 168, 0, 15);
   IPAddress dns(192, 168, 0, 1);
   IPAddress gateway(192, 168, 0, 1);
   IPAddress subnet(255, 255, 255, 0);
@@ -209,6 +209,9 @@ void findStopSequence() {
 void findPowerSequence() {
   byte temp; //temp variable to store loop search data
   startIndex = 0; //start at position 0 of exctracted SML message
+#ifdef _debug_msg
+  Serial.println("OBIS 1.7.0: ");
+#endif
   for (int x = 0; x < sizeof(smlMessage); x++) { //for as long there are element in the exctracted SML message
     temp = smlMessage[x]; //set temp variable to 0,1,2 element in extracted SML message
     if (temp == powerSequence[startIndex]) //compare with power sequence
@@ -241,10 +244,17 @@ void findPowerSequence() {
   } else if (powerbytes == 2) {
     currentpower = power[0];
   }
+#ifdef _debug_msg
+  Serial.println("OBIS 1.7.0 Value: ");
+  Serial.println(currentpower);
+#endif
 }
 
 void findConsumptionSequence() {
   byte temp;
+#ifdef _debug_msg
+  Serial.println("OBIS 1.8.0: ");
+#endif
   startIndex = 0;
   for (int x = 0; x < sizeof(smlMessage); x++) {
     temp = smlMessage[x];
@@ -273,14 +283,6 @@ void findConsumptionSequence() {
     }
   }
 
-#ifdef _debug_msg
-  for (int x = 0; x < sizeof(smlMessage); x++) {
-    Serial.print(smlMessage[x], HEX);
-    Serial.print(" ");
-  }
-  delay(30000); // wait for 30 seconds while in debug mode
-#endif
-
   currentconsumption = consumption[0];
   currentconsumption <<= 8;
   currentconsumption += consumption[1];
@@ -291,10 +293,17 @@ void findConsumptionSequence() {
 
   // scale 10⁻1 and unit is Wh => factor 10.000 for kWh
   currentconsumptionkWh = (float)currentconsumption / 10000;
+#ifdef _debug_msg
+  Serial.println("OBIS 1.8.0 value: ");
+  Serial.println(currentconsumptionkWh);
+#endif
 }
 
 void findDeliveredSequence() {
   byte temp;
+#ifdef _debug_msg
+  Serial.println("OBIS 2.8.0: ");
+#endif
   startIndex = 0;
   for (int x = 0; x < sizeof(smlMessage); x++) {
     temp = smlMessage[x];
@@ -318,10 +327,15 @@ void findDeliveredSequence() {
   } else if (deliverbytes == 2) {
     deliveredTotal = delivered[0];
   }
+#ifdef _debug_msg
+  Serial.println("OBIS 2.8.0 value: ");
+  Serial.println(deliveredTotal);
+#endif
 }
 
 void findUptime() {
   byte temp;
+
   startIndex = 0;
   for (int x = 0; x < sizeof(smlMessage); x++) {
     temp = smlMessage[x];
@@ -384,6 +398,7 @@ void publishMessage() {
   debug_sml();
 #endif
 
+
   // check WiFi connection
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WLAN disconnected, trigger reconnect.");
@@ -401,12 +416,13 @@ void publishMessage() {
 
   // debug output
   Serial.println(currentconsumption);
+  Serial.println((signed short)currentpower);
 
-  client.publish("/home/commodity/electricity/consumedDeciWatt", int2charArray(currentconsumption));
-  client.publish("/home/commodity/electricity/deliveredkwh", int2charArray(deliveredTotal));
-  client.publish("/home/commodity/electricity/currentWatt", int2charArray(currentpower));
-  client.publish("/home/commodity/electricity/uptime", int2charArray(uptimeTotal));
-  client.publish("/home/commodity/electricity/freeheap", int2charArray(ESP.getFreeHeap()));
+  client.publish("/home/commodity/electricity/consumedDeciWatt", long2charArray(currentconsumption));
+  client.publish("/home/commodity/electricity/deliveredkwh", long2charArray(deliveredTotal));
+  client.publish("/home/commodity/electricity/currentWatt", short2charArray((signed short)currentpower));
+  client.publish("/home/commodity/electricity/uptime", long2charArray(uptimeTotal));
+  client.publish("/home/commodity/electricity/freeheap", long2charArray(ESP.getFreeHeap()));
 
   // clear the buffers
   memset(smlMessage, 0, sizeof(smlMessage));
@@ -419,7 +435,15 @@ void publishMessage() {
   stage = 0; // start over
 }
 
-char* int2charArray(const unsigned long value) {
+char* long2charArray(const unsigned long value) {
+  tmpStr = "";
+  tmpStr += value;
+  tmpStr.toCharArray(publishValue, tmpStr.length() + 1);
+  tmpStr = "";
+  return publishValue;
+}
+
+char* short2charArray(const signed short value) {
   tmpStr = "";
   tmpStr += value;
   tmpStr.toCharArray(publishValue, tmpStr.length() + 1);
