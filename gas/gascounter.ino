@@ -1,34 +1,26 @@
 /*
-  Debounce
+  Read general gas meter consumption with a reed switch and pulldown ressitor
+  based on Debounce example from Arduino IDE
+
+  Jan Laudahn
+  Version 1.0
 
   Each time the input pin goes from LOW to HIGH (e.g. because of a push-button
   press), the output pin is toggled from LOW to HIGH or HIGH to LOW. There's a
   minimum delay between toggles to debounce the circuit (i.e. to ignore noise).
 
   The circuit:
-  - LED attached from pin 13 to ground through 220 ohm resistor
-  - pushbutton attached from pin 2 to +5V
+  - reed switch attached from pin 2 to +5V
   - 10 kilohm resistor attached from pin 2 to ground
 
-  - Note: On most Arduino boards, there is already an LED on the board connected
-    to pin 13, so you don't need any extra components for this example.
-
-  created 21 Nov 2006
-  by David A. Mellis
-  modified 30 Aug 2011
-  by Limor Fried
-  modified 28 Dec 2012
-  by Mike Walters
-  modified 30 Aug 2016
-  by Arturo Guadalupi
-
-  This example code is in the public domain.
+  Part of this example code is in the public domain.
 
   https://www.arduino.cc/en/Tutorial/BuiltInExamples/Debounce
 */
 
 #include <ESP8266WiFi.h>
-#include <PubSubClient.h>
+//#include <PubSubClient.h>
+#include <MQTTPubSubClient.h>
 #include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
 
 // WiFi and MQTT
@@ -56,8 +48,9 @@ unsigned long debounceDelay = 50;    // the debounce time; increase if the outpu
 unsigned long gascount;
 
 WiFiClient espClient;
-PubSubClient client(espClient);
+//PubSubClient client(espClient);
 WiFiManager wifiManager;
+MQTTPubSubClient client;
 
 // id/name, placeholder/prompt, default, length
 WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, 40);
@@ -93,7 +86,11 @@ void setup() {
   // set MQTT and initial gas value
   mqtt_port_int = atoi(mqtt_port);
   gascount = atoi(gas_value);
-  client.setServer(mqtt_server, mqtt_port_int);
+  // client.setServer(mqtt_server, mqtt_port_int);
+  // new lib testing
+  espClient.connect(mqtt_server, mqtt_port_int);
+  client.begin(espClient);
+  client.connect("ESP-Gas", "public", "public");
 
   Serial.println("MQTT server: ");
   Serial.print(mqtt_server);
@@ -116,16 +113,14 @@ void loop() {
     setup_wifi();
   }
 
-  // check MQTT connection
-  if (!client.connected()) {
-    Serial.println("MQTT not connected, initialise reconnection");
-    while (!client.connected()) {
-      client.connect("ESP_gas");
-      Serial.print(".");
-      delay(100);
+  // check MQTT connection with update
+  if (!client.update()) {
+    Serial.println("MQTT disconnected, trigger reconnect.");
+    if (!client.connect("ESP-Gas", "public", "public")) {
+      ESP.reset();
     }
   }
-  client.loop();
+  
   // read the state of the switch into a local variable:
   int reading = digitalRead(buttonPin);
 
