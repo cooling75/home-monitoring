@@ -2,7 +2,7 @@
 /*
     Application note: Read a Holley DTZ541-ZEBA (2021) electricity meter via
     phototransistor + 1k resistor interface and SML protocol
-    Version 1.5
+    Version 1.6
     Copyright (C) 2022  Jan Laudahn https://laudart.de
 
     credits:
@@ -13,6 +13,7 @@
     more information about SML protocol:
              http://www.schatenseite.de/2016/05/30/smart-message-language-stromzahler-auslesen/
              https://wiki.volkszaehler.org/software/sml
+             https://www.stefan-weigert.de/php_loader/sml.php
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -66,7 +67,6 @@ unsigned long deliveredTotal;
 signed short currentpower; //variable to hold translated "Wirkleistung" value
 unsigned long currentconsumption; //variable to hold translated "Gesamtverbrauch" value
 float currentconsumptionkWh; //variable to calulate actual "Gesamtverbrauch" in kWh
-float uptimeTotalDays; // uptime in days
 
 int pin_d2 = 4;
 
@@ -85,7 +85,6 @@ void setup() {
   MeterSerial.begin(9600);  // meter via RS485
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
   WiFi.mode(WIFI_STA);
-
   // static ip configuration
   IPAddress ip(192, 168, 0, 15);
   IPAddress dns(192, 168, 0, 1);
@@ -140,6 +139,8 @@ void loop() {
     case 6:
       publishMessage(); // send out via MQQTT
       break;
+    default:
+      ESP.restart();
   }
 }
 
@@ -301,9 +302,7 @@ void findConsumptionSequence() {
 
 void findDeliveredSequence() {
   byte temp;
-#ifdef _debug_msg
-  Serial.println("OBIS 2.8.0: ");
-#endif
+  deliveredTotal = 0;
   startIndex = 0;
   for (int x = 0; x < sizeof(smlMessage); x++) {
     temp = smlMessage[x];
@@ -311,7 +310,7 @@ void findDeliveredSequence() {
       startIndex++;
       if (startIndex == sizeof(deliveredSequence)) {
         deliverbytes = (smlMessage[x + 14] & 0x0F);
-        for (int y = 0; y < deliverbytes; y++) {
+        for (int y = 0; y < deliverbytes - 1; y++) {
           delivered[y] = smlMessage[x + y + 15];
         }
         startIndex = 0;
@@ -321,16 +320,13 @@ void findDeliveredSequence() {
       startIndex = 0;
     }
   }
-  // maybe the value extends when power is delivered to grid(?)
-  if (deliverbytes == 3) {
-    deliveredTotal = (delivered[0] << 8 | delivered[1] << 0); //merge 2 bytes into single variable to calculate power value
-  } else if (deliverbytes == 2) {
-    deliveredTotal = delivered[0];
+  // value deliverbytes extends when power is delivered to grid!
+  for (int i = 0; i < deliverbytes - 1; i++) {
+    deliveredTotal += delivered[i];
+    if (i < deliverbytes - 2) {
+      deliveredTotal <<= 8;
+    }
   }
-#ifdef _debug_msg
-  Serial.println("OBIS 2.8.0 value: ");
-  Serial.println(deliveredTotal);
-#endif
 }
 
 void findUptime() {
@@ -367,32 +363,9 @@ void findUptime() {
   uptimeTotal += uptime[2];
   uptimeTotal <<= 8;
   uptimeTotal += uptime[3];
-
-  uptimeTotalDays = (float)uptimeTotal / 86400;
 }
 
 void publishMessage() {
-#ifdef _debug_msg
-  // Wirkleistung
-  Serial.print("Real Power: ");
-  Serial.print(currentpower);
-  Serial.println(" W");
-  // Gesamtverbrauch
-  Serial.print("Total Consumption: ");
-  Serial.print(currentconsumptionkWh);
-  Serial.println(" kWh");
-  // power delivered to grid
-  Serial.print("Total delivered: ");
-  Serial.print(deliveredTotal);
-  Serial.println(" kWh");
-  // Uptime
-  Serial.print("Uptime (sec.): ");
-  Serial.print(uptimeTotal);
-  Serial.println(" sec.");
-  Serial.print("Uptime (days): ");
-  Serial.print(uptimeTotalDays);
-  Serial.println(" days");
-#endif
 
 #ifdef _debug_sml
   debug_sml();
@@ -407,7 +380,9 @@ void publishMessage() {
   }
 
   // check MQTT connection with update
-  if (!client.update()) {
+  client.update();
+  if (!client.isConnected()) {
+    client.disconnect();
     Serial.println("MQTT disconnected, trigger reconnect.");
     if (!client.connect("ESP-Strom", "public", "public")) {
       ESP.reset();
@@ -416,6 +391,7 @@ void publishMessage() {
 
   // debug output
   Serial.println(currentconsumption);
+  Serial.println(deliveredTotal);
   Serial.println((signed short)currentpower);
 
   client.publish("/home/commodity/electricity/consumedDeciWatt", long2charArray(currentconsumption));
