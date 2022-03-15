@@ -2,7 +2,7 @@
 /*
     Application note: Read a Holley DTZ541-ZEBA (2021) electricity meter via
     phototransistor + 1k resistor interface and SML protocol
-    Version 1.6
+    Version 1.7
     Copyright (C) 2022  Jan Laudahn https://laudart.de
 
     credits:
@@ -30,9 +30,11 @@
 */
 
 #include <ESP8266WiFi.h>
-//#include <PubSubClient.h>
 #include <SoftwareSerial.h>
 #include <MQTTPubSubClient.h>
+
+// reset every 3 hours
+// #define TWELVE_HRS 43200000UL
 
 // WiFi and MQTT
 const char* SSID = "";
@@ -41,6 +43,7 @@ const char* MQTT_BROKER = "";
 
 String tmpStr;
 char publishValue[20];
+bool pubsuccess;
 
 // DATA
 byte inByte; //byte to store the serial buffer
@@ -66,25 +69,27 @@ unsigned long uptimeTotal;
 unsigned long deliveredTotal;
 signed short currentpower; //variable to hold translated "Wirkleistung" value
 unsigned long currentconsumption; //variable to hold translated "Gesamtverbrauch" value
-float currentconsumptionkWh; //variable to calulate actual "Gesamtverbrauch" in kWh
+unsigned long startTime; // ESP reset var
 
 int pin_d2 = 4;
 
 SoftwareSerial MeterSerial(pin_d2, 3, true); // RX, TX, inverted mode(!)
 WiFiClient espClient;
-//PubSubClient client(espClient);
 MQTTPubSubClient client;
 
 // #define _debug_msg
 // #define _debug_sml
 
 void setup() {
+  startTime = millis();
   tmpStr.reserve(20);
   // bring up serial ports
   Serial.begin(115200);   // debug via USB
   MeterSerial.begin(9600);  // meter via RS485
+  WiFi.setAutoConnect(true);
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
   WiFi.mode(WIFI_STA);
+
   // static ip configuration
   IPAddress ip(192, 168, 0, 15);
   IPAddress dns(192, 168, 0, 1);
@@ -93,12 +98,11 @@ void setup() {
   WiFi.config(ip, dns, gateway, subnet);
 
   setup_wifi();
-  //client.setServer(MQTT_BROKER, 1883);
-  // new lib testing
   espClient.connect(MQTT_BROKER, 1883);
   client.begin(espClient);
-  client.connect("ESP-Strom", "public", "public");
-  Serial.println("Waiting for data");
+  client.setCleanSession(true);
+  client.connect("ESP-Strom");
+  Serial.println("Starting loop");
 }
 
 void setup_wifi() {
@@ -115,8 +119,10 @@ void setup_wifi() {
 }
 
 void loop() {
-  yield();
-  client.update();
+  //  if (millis() - startTime > TWELVE_HRS)
+  //  {
+  //    ESP.reset();
+  //  }
   switch (stage) {
     case 0:
       findStartSequence(); // look for start sequence
@@ -139,8 +145,6 @@ void loop() {
     case 6:
       publishMessage(); // send out via MQQTT
       break;
-    default:
-      ESP.restart();
   }
 }
 
@@ -156,8 +160,8 @@ void debug_sml() {
 void findStartSequence() {
   while (MeterSerial.available())
   {
-    yield();
-    client.update();
+    // yield();
+
     inByte = MeterSerial.read(); //read serial buffer into array
 
     if (inByte == startSequence[startIndex]) //in case byte in array matches the start sequence at position 0,1,2...
@@ -177,14 +181,15 @@ void findStartSequence() {
     else {
       startIndex = 0; // set index  back to 0 for startover
     }
+    client.update();
   }
 }
 
 void findStopSequence() {
   while (MeterSerial.available())
   {
-    yield();
-    client.update();
+    // yield();
+
     inByte = MeterSerial.read();
     smlMessage[smlIndex] = inByte;
     smlIndex++;
@@ -204,15 +209,13 @@ void findStopSequence() {
     else {
       stopIndex = 0;
     }
+    client.update();
   }
 }
 
 void findPowerSequence() {
   byte temp; //temp variable to store loop search data
   startIndex = 0; //start at position 0 of exctracted SML message
-#ifdef _debug_msg
-  Serial.println("OBIS 1.7.0: ");
-#endif
   for (int x = 0; x < sizeof(smlMessage); x++) { //for as long there are element in the exctracted SML message
     temp = smlMessage[x]; //set temp variable to 0,1,2 element in extracted SML message
     if (temp == powerSequence[startIndex]) //compare with power sequence
@@ -224,14 +227,7 @@ void findPowerSequence() {
         powerbytes = (smlMessage[x + 7] & 0x0F);
         for (int y = 0; y < powerbytes; y++) { //read the next byte(s) (the actual power value)
           power[y] = smlMessage[x + y + 8]; //store into power array
-#ifdef _debug_msg
-          Serial.print(String(power[y], HEX));
-          Serial.print(" ");
-#endif
         }
-#ifdef _debug_msg
-        Serial.println();
-#endif
         stage = 3; // go to stage 3
         startIndex = 0;
       }
@@ -245,17 +241,10 @@ void findPowerSequence() {
   } else if (powerbytes == 2) {
     currentpower = power[0];
   }
-#ifdef _debug_msg
-  Serial.println("OBIS 1.7.0 Value: ");
-  Serial.println(currentpower);
-#endif
 }
 
 void findConsumptionSequence() {
   byte temp;
-#ifdef _debug_msg
-  Serial.println("OBIS 1.8.0: ");
-#endif
   startIndex = 0;
   for (int x = 0; x < sizeof(smlMessage); x++) {
     temp = smlMessage[x];
@@ -291,13 +280,6 @@ void findConsumptionSequence() {
   currentconsumption += consumption[2];
   currentconsumption <<= 8;
   currentconsumption += consumption[3];
-
-  // scale 10⁻1 and unit is Wh => factor 10.000 for kWh
-  currentconsumptionkWh = (float)currentconsumption / 10000;
-#ifdef _debug_msg
-  Serial.println("OBIS 1.8.0 value: ");
-  Serial.println(currentconsumptionkWh);
-#endif
 }
 
 void findDeliveredSequence() {
@@ -366,39 +348,48 @@ void findUptime() {
 }
 
 void publishMessage() {
-
 #ifdef _debug_sml
   debug_sml();
 #endif
 
 
   // check WiFi connection
-  if (WiFi.status() != WL_CONNECTED) {
+  if (WiFi.status() != WL_CONNECTED || !client.isConnected()) {
     Serial.println("WLAN disconnected, trigger reconnect.");
     WiFi.disconnect();
     setup_wifi();
+    // when WiFi was reconnected, reconnect MQTT too
+    mqtt_reconnect();
   }
 
-  // check MQTT connection with update
   client.update();
-  if (!client.isConnected()) {
-    client.disconnect();
-    Serial.println("MQTT disconnected, trigger reconnect.");
-    if (!client.connect("ESP-Strom", "public", "public")) {
-      ESP.reset();
-    }
-  }
 
   // debug output
+  Serial.print("getFreeHeap: ");
+  Serial.println(ESP.getFreeHeap());
+  Serial.print("getHeapFragmentation: ");
+  Serial.println(ESP.getHeapFragmentation());
+  Serial.print("getMaxFreeBlockSize: ");
+  Serial.println(ESP.getMaxFreeBlockSize());
   Serial.println(currentconsumption);
   Serial.println(deliveredTotal);
   Serial.println((signed short)currentpower);
 
-  client.publish("/home/commodity/electricity/consumedDeciWatt", long2charArray(currentconsumption));
-  client.publish("/home/commodity/electricity/deliveredkwh", long2charArray(deliveredTotal));
-  client.publish("/home/commodity/electricity/currentWatt", short2charArray((signed short)currentpower));
-  client.publish("/home/commodity/electricity/uptime", long2charArray(uptimeTotal));
-  client.publish("/home/commodity/electricity/freeheap", long2charArray(ESP.getFreeHeap()));
+  // currentconsumption scale 10⁻1 and unit is Wh => factor 10.000 for kWh
+  pubsuccess = true;
+  pubsuccess &= client.publish("/home/commodity/electricity/consumedDeciWatt", long2charArray(currentconsumption));
+  pubsuccess &= client.publish("/home/commodity/electricity/deliveredkwh", long2charArray(deliveredTotal));
+  pubsuccess &= client.publish("/home/commodity/electricity/currentWatt", short2charArray((signed short)currentpower));
+  pubsuccess &= client.publish("/home/commodity/electricity/uptime", long2charArray(uptimeTotal));
+  pubsuccess &= client.publish("/home/commodity/electricity/freeheap", long2charArray(ESP.getFreeHeap()));
+  pubsuccess &= client.publish("/home/commodity/electricity/freeblocksize", long2charArray(ESP.getMaxFreeBlockSize()));
+  pubsuccess &= client.publish("/home/commodity/electricity/heapfragmentation", short2charArray(ESP.getHeapFragmentation()));
+
+  // if publish wasn't successful, try to reconnect
+  if (!pubsuccess) {
+    Serial.println("Problems with publish occured...");
+    mqtt_reconnect();
+  }
 
   // clear the buffers
   memset(smlMessage, 0, sizeof(smlMessage));
@@ -425,4 +416,27 @@ char* short2charArray(const signed short value) {
   tmpStr.toCharArray(publishValue, tmpStr.length() + 1);
   tmpStr = "";
   return publishValue;
+}
+
+void mqtt_reconnect() {
+  // ensure mqtt client is disconnected
+  client.disconnect();
+  // connect to broker again and connect start reconnecting mqtt client
+  espClient.connect(MQTT_BROKER, 1883);
+  while (!client.isConnected()) {
+    Serial.println("MQTT disconnected, trigger reconnect.");
+    // generate new client ID
+    String clientId = "ESP-Strom-";
+    clientId += String(random(0xffff), HEX);
+    if (client.connect(clientId.c_str())) {
+      Serial.println("Connected");
+      client.publish("/home/debug/strom", "ESP-Strom: reconnected!");
+    } else {
+      Serial.println("MQTT connection failed");
+      Serial.println("Status: ");
+      Serial.print(client.getReturnCode());
+      Serial.println("Try again in 1s");
+    }
+    delay(1000);
+  }
 }

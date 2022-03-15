@@ -3,7 +3,7 @@
   based on Debounce example from Arduino IDE
 
   Jan Laudahn
-  Version 1.0
+  Version 1.1
 
   Each time the input pin goes from LOW to HIGH (e.g. because of a push-button
   press), the output pin is toggled from LOW to HIGH or HIGH to LOW. There's a
@@ -19,7 +19,6 @@
 */
 
 #include <ESP8266WiFi.h>
-//#include <PubSubClient.h>
 #include <MQTTPubSubClient.h>
 #include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
 
@@ -48,7 +47,6 @@ unsigned long debounceDelay = 50;    // the debounce time; increase if the outpu
 unsigned long gascount;
 
 WiFiClient espClient;
-//PubSubClient client(espClient);
 WiFiManager wifiManager;
 MQTTPubSubClient client;
 
@@ -73,9 +71,9 @@ void setup() {
   wifiManager.addParameter(&custom_gas_value);
 
   //first parameter is name of access point, second is the password
-  wifiManager.autoConnect("ESP-AP-GAS");
+  // wifiManager.autoConnect("ESP-AP-GAS");
 
-  wifiManager.startConfigPortal();
+  wifiManager.startConfigPortal("ESP-AP-GAS");
 
   // mqtt start
   strcpy(mqtt_server, custom_mqtt_server.getValue());
@@ -86,11 +84,10 @@ void setup() {
   // set MQTT and initial gas value
   mqtt_port_int = atoi(mqtt_port);
   gascount = atoi(gas_value);
-  // client.setServer(mqtt_server, mqtt_port_int);
-  // new lib testing
   espClient.connect(mqtt_server, mqtt_port_int);
   client.begin(espClient);
-  client.connect("ESP-Gas", "public", "public");
+  client.setCleanSession(true);
+  client.connect("ESP-Gas");
 
   Serial.println("MQTT server: ");
   Serial.print(mqtt_server);
@@ -104,23 +101,9 @@ void setup() {
 }
 
 void loop() {
-  // wifiManager.process();
-
-  // check WiFi connection
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi not connected, initialise reconnecting");
-    WiFi.disconnect();
-    setup_wifi();
-  }
-
-  // check MQTT connection with update
-  if (!client.update()) {
-    Serial.println("MQTT disconnected, trigger reconnect.");
-    if (!client.connect("ESP-Gas", "public", "public")) {
-      ESP.reset();
-    }
-  }
-  
+  // update MQTT client connection
+  client.update();
+  delay(10);
   // read the state of the switch into a local variable:
   int reading = digitalRead(buttonPin);
 
@@ -151,9 +134,11 @@ void loop() {
         Serial.print(gascount);
         Serial.println("");
         if (client.publish("/home/commodity/gas/consumedcubicmhundredths", int2charArray(gascount))) {
+          // if (client.publish("/home/commodity/gas/test", int2charArray(gascount))) {
           Serial.println("MQTT message published");
         } else {
           Serial.println("MQTT publish not successful!");
+          mqtt_reconnect();
         }
       }
     }
@@ -171,9 +156,24 @@ char* int2charArray(const unsigned long value) {
   return publishValue;
 }
 
-void setup_wifi() {
-  WiFi.begin(wifiManager.getWiFiSSID(), wifiManager.getWiFiPass());
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+void mqtt_reconnect() {
+  client.disconnect();
+  espClient.connect(mqtt_server, mqtt_port_int);
+  while (!client.isConnected() && WiFi.status() == WL_CONNECTED) {
+    Serial.println("MQTT disconnected, trigger reconnect.");
+    // generate new client ID
+    String clientId = "ESP-Gas-";
+    clientId += String(random(0xffff), HEX);
+    if (client.connect(clientId.c_str())) {
+      Serial.println("Connected");
+      client.publish("/home/debug/strom", "ESP-Gas: reconnected!");
+    } else {
+      Serial.println("MQTT connection failed");
+      Serial.print("Status: ");
+      Serial.println(client.getReturnCode());
+      Serial.println("Try again in 1s");
+      client.disconnect();
+    }
+    delay(1000);
   }
 }
