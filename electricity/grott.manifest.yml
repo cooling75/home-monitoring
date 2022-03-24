@@ -1,0 +1,47 @@
+# grott.manifest.yml
+# deployment
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: home-mon
+  name: grott
+spec:
+  selector:
+    matchLabels:
+      app: grott
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: grott
+    spec:
+      containers:
+      - name: grott
+        image: ledidobe/grottrpi
+        resources:
+          limits:
+            cpu: "50m"
+            memory: "64Mi"
+          requests:
+            cpu: "5m"
+            memory: "8Mi"
+        env:
+        - name: gmqttip
+          value: "192.168.178.153"
+---
+# service
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: home-mon
+  name: grott-svc
+spec:
+  selector:
+    app: grott
+  ports:
+    - protocol: TCP
+      port: 5279
+      targetPort: 5279
+  type: LoadBalancer    
