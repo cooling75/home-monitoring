@@ -2,7 +2,7 @@
 /*
     Application note: Read a Holley DTZ541-ZEBA (2021) electricity meter via
     phototransistor + 1k resistor interface and SML protocol
-    Version 1.7
+    Version 1.10 - 25.04.2022
     Copyright (C) 2022  Jan Laudahn https://laudart.de
 
     credits:
@@ -32,9 +32,6 @@
 #include <ESP8266WiFi.h>
 #include <SoftwareSerial.h>
 #include <MQTTPubSubClient.h>
-
-// reset every 3 hours
-// #define TWELVE_HRS 43200000UL
 
 // WiFi and MQTT
 const char* SSID = "";
@@ -69,19 +66,19 @@ unsigned long uptimeTotal;
 unsigned long deliveredTotal;
 signed short currentpower; //variable to hold translated "Wirkleistung" value
 unsigned long currentconsumption; //variable to hold translated "Gesamtverbrauch" value
-unsigned long startTime; // ESP reset var
 
 int pin_d2 = 4;
 
 SoftwareSerial MeterSerial(pin_d2, 3, true); // RX, TX, inverted mode(!)
 WiFiClient espClient;
+//PubSubClient client(espClient);
 MQTTPubSubClient client;
 
 // #define _debug_msg
 // #define _debug_sml
 
 void setup() {
-  startTime = millis();
+
   tmpStr.reserve(20);
   // bring up serial ports
   Serial.begin(115200);   // debug via USB
@@ -91,17 +88,14 @@ void setup() {
   WiFi.mode(WIFI_STA);
 
   // static ip configuration
-  IPAddress ip(192, 168, 0, 15);
-  IPAddress dns(192, 168, 0, 1);
-  IPAddress gateway(192, 168, 0, 1);
+  IPAddress ip(192, 168, 178, 231);
+  IPAddress dns(192, 168, 178, 151);
+  IPAddress gateway(192, 168, 178, 1);
   IPAddress subnet(255, 255, 255, 0);
   WiFi.config(ip, dns, gateway, subnet);
 
   setup_wifi();
-  espClient.connect(MQTT_BROKER, 1883);
-  client.begin(espClient);
-  client.setCleanSession(true);
-  client.connect("ESP-Strom");
+  mqtt_reconnect();
   Serial.println("Starting loop");
 }
 
@@ -118,11 +112,33 @@ void setup_wifi() {
   Serial.println(WiFi.localIP());
 }
 
+void mqtt_reconnect() {
+  // connect to broker again and connect start reconnecting mqtt client
+  espClient.connect(MQTT_BROKER, 1883);
+  client.begin(espClient);
+  client.setCleanSession(true);
+  while (!client.isConnected()) {
+    Serial.println("MQTT disconnected, trigger reconnect.");
+    // generate new client ID
+    String clientId = "ESP-Strom-";
+    clientId += String(random(0xffff), HEX);
+    if (client.connect(clientId.c_str())) {
+      Serial.println("MQTT connected");
+      //espClient.connect(MQTT_BROKER, 1883);
+      //client.begin(espClient);
+      //client.setCleanSession(true);
+      client.publish("/home/debug/electricity", "ESP-Strom: reconnected!");
+    } else {
+      Serial.println("MQTT connection failed");
+      Serial.print("Status: ");
+      Serial.println(client.getReturnCode());
+      Serial.println("Try again in 5s");
+      delay(5000);
+    }
+  }
+}
+
 void loop() {
-  //  if (millis() - startTime > TWELVE_HRS)
-  //  {
-  //    ESP.reset();
-  //  }
   switch (stage) {
     case 0:
       findStartSequence(); // look for start sequence
@@ -143,7 +159,7 @@ void loop() {
       findUptime(); // look for uptime of power meter
       break;
     case 6:
-      publishMessage(); // send out via MQQTT
+      publishMessage(); // send out via MQTT
       break;
   }
 }
@@ -238,8 +254,11 @@ void findPowerSequence() {
   }
   if (powerbytes == 3) {
     currentpower = (power[0] << 8 | power[1] << 0); //merge 2 bytes into single variable to calculate power value
-  } else if (powerbytes == 2) {
+  } else if (powerbytes == 2 && power[0] < 128) {
     currentpower = power[0];
+  } else {
+    currentpower = (power[0] << 8) | ((byte) 00000000);
+    currentpower >>= 8;
   }
 }
 
@@ -354,26 +373,29 @@ void publishMessage() {
 
 
   // check WiFi connection
-  if (WiFi.status() != WL_CONNECTED || !client.isConnected()) {
-    Serial.println("WLAN disconnected, trigger reconnect.");
-    WiFi.disconnect();
-    setup_wifi();
-    // when WiFi was reconnected, reconnect MQTT too
-    mqtt_reconnect();
-  }
+  //  if (WiFi.status() != WL_CONNECTED || !client.isConnected()) {
+  //    Serial.println("WLAN disconnected, trigger reconnect.");
+  //    WiFi.disconnect();
+  //    setup_wifi();
+  //    // when WiFi was reconnected, reconnect MQTT too
+  //    mqtt_reconnect();
+  //  }
 
   client.update();
 
   // debug output
-  Serial.print("getFreeHeap: ");
-  Serial.println(ESP.getFreeHeap());
-  Serial.print("getHeapFragmentation: ");
-  Serial.println(ESP.getHeapFragmentation());
-  Serial.print("getMaxFreeBlockSize: ");
-  Serial.println(ESP.getMaxFreeBlockSize());
-  Serial.println(currentconsumption);
-  Serial.println(deliveredTotal);
-  Serial.println((signed short)currentpower);
+//  Serial.print("getFreeHeap: ");
+//  Serial.println(ESP.getFreeHeap());
+//  Serial.print("getHeapFragmentation: ");
+//  Serial.println(ESP.getHeapFragmentation());
+//  Serial.print("getMaxFreeBlockSize: ");
+//  Serial.println(ESP.getMaxFreeBlockSize());
+//  Serial.print("Total consumed: ");
+//  Serial.println(currentconsumption);
+//  Serial.print("Total delivered: ");
+//  Serial.println(deliveredTotal);
+//  Serial.print("Current power (short): ");
+//  Serial.println((signed short)currentpower);
 
   // currentconsumption scale 10⁻1 and unit is Wh => factor 10.000 for kWh
   pubsuccess = true;
@@ -416,27 +438,4 @@ char* short2charArray(const signed short value) {
   tmpStr.toCharArray(publishValue, tmpStr.length() + 1);
   tmpStr = "";
   return publishValue;
-}
-
-void mqtt_reconnect() {
-  // ensure mqtt client is disconnected
-  client.disconnect();
-  // connect to broker again and connect start reconnecting mqtt client
-  espClient.connect(MQTT_BROKER, 1883);
-  while (!client.isConnected()) {
-    Serial.println("MQTT disconnected, trigger reconnect.");
-    // generate new client ID
-    String clientId = "ESP-Strom-";
-    clientId += String(random(0xffff), HEX);
-    if (client.connect(clientId.c_str())) {
-      Serial.println("Connected");
-      client.publish("/home/debug/strom", "ESP-Strom: reconnected!");
-    } else {
-      Serial.println("MQTT connection failed");
-      Serial.println("Status: ");
-      Serial.print(client.getReturnCode());
-      Serial.println("Try again in 1s");
-    }
-    delay(1000);
-  }
 }
