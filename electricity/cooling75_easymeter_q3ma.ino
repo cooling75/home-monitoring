@@ -1,8 +1,8 @@
 
 /*
-    Application note: Read a Easymeter electricity meter via
+    Application note: Read a Easymeter Q3MA1120 V6.02 electricity meter via
     phototransistor + 1k resistor interface and SML protocol
-    Version 0.1 - 26.04.2022
+    Version 0.2 - 06.05.2022
     Copyright (C) 2022  Jan Laudahn https://laudart.de
 
     credits:
@@ -32,15 +32,18 @@
 #include <ESP8266WiFi.h>
 #include <SoftwareSerial.h>
 #include <MQTTPubSubClient.h>
+#include <ArduinoJson.h>
 
 // WiFi and MQTT
 const char* SSID = "";
 const char* PSK = "";
 const char* MQTT_BROKER = "";
+const short MQTT_PORT = ;
 
+// transmission
 String tmpStr;
-char publishValue[20];
-bool pubsuccess;
+StaticJsonDocument<256> doc;
+char mqttjson[256];
 
 // DATA
 byte inByte; //byte to store the serial buffer
@@ -54,12 +57,15 @@ const byte phase3[] = {0x77, 0x07, 0x01, 0x00, 0x4C, 0x07, 0x00, 0xFF };
 const byte consumptionSequence[] = { 0x77, 0x07, 0x01, 0x00, 0x01, 0x08, 0x00, 0xFF }; //sequence predeecing the current "Total power consumption" value (4 Bytes)
 const byte deliveredSequence[] = { 0x77, 0x07, 0x01, 0x00, 0x02, 0x08, 0x00, 0xFF }; // sequence preceeding the delivered to grid power 15 byte to 1 byte (?)
 const byte vendorSequence[] = { 0x77, 0x07, 0x01, 0x00, 0x60, 0x32, 0x01, 0x01 }; // sequence preceeding the vendor shortname, 6 bytes to 3 byte in ASCII, here "HLY"
-const byte uptimeSequence[] = { 0x08, 0x01, 0x00, 0x62, 0x0A, 0xFF, 0xFF, 0x00 }; // 5 bytes to 4 byte uptime
+const byte uptimeSequence[] = {0x77, 0x01, 0x0B, 0x09, 0x01, 0x45, 0x53, 0x59, 0x11, 0x03, 0x9C, 0x7B, 0xB6 }; // 12 bytes to 4 byte uptime
 int smlIndex; //index counter within smlMessage array
 int startIndex; //start index for start sequence search
 int stopIndex; //start index for stop sequence search
 int stage; //index to maneuver through cases
-int powerbytes; //number of bytes containing power sequence
+short powerbytes; //number of bytes containing power sequence
+short phase1bytes;
+short phase2bytes;
+short phase3bytes;
 int deliverbytes; //number of bytes containing delivered sequence
 int consumedbytes;
 byte power[8]; //array that holds the extracted 4 byte "Wirkleistung" value
@@ -67,16 +73,20 @@ byte consumption[8]; //array that holds the extracted 4 byte "Gesamtverbrauch" v
 byte delivered[8];
 byte uptime[8];
 unsigned long uptimeTotal;
-unsigned long deliveredTotal;
-signed short currentpower; //variable to hold translated "Wirkleistung" value
-unsigned long currentconsumption; //variable to hold translated "Gesamtverbrauch" value
+uint64_t deliveredTotal;
+// in case of deliver to grid use signed
+signed long currentpower; //variable to hold translated "Wirkleistung" value
+uint64_t phase1power;
+uint64_t phase2power;
+uint64_t phase3power;
+uint64_t currentconsumption; //variable to hold translated "Gesamtverbrauch" value
 
 int pin_d2 = 4;
 
 SoftwareSerial MeterSerial(pin_d2, 3, true); // RX, TX, inverted mode(!)
 WiFiClient espClient;
 //PubSubClient client(espClient);
-MQTTPubSubClient client;
+MQTTPubSub::PubSubClient<256> client;
 
 // #define _debug_msg
 // #define _debug_sml
@@ -92,13 +102,16 @@ void setup() {
   WiFi.mode(WIFI_STA);
 
   // static ip configuration
-  IPAddress ip(192, 168, 178, 231);
-  IPAddress dns(192, 168, 178, 151);
-  IPAddress gateway(192, 168, 178, 1);
+  IPAddress ip(192, 168, 177, 231);
+  IPAddress dns(192, 168, 177, 1);
+  IPAddress gateway(192, 168, 177, 1);
   IPAddress subnet(255, 255, 255, 0);
   WiFi.config(ip, dns, gateway, subnet);
 
   setup_wifi();
+  espClient.connect(MQTT_BROKER, MQTT_PORT);
+  client.begin(espClient);
+  client.setCleanSession(true);
   mqtt_reconnect();
   Serial.println("Starting loop");
 }
@@ -117,21 +130,17 @@ void setup_wifi() {
 }
 
 void mqtt_reconnect() {
+  client.disconnect();
   // connect to broker again and connect start reconnecting mqtt client
-  espClient.connect(MQTT_BROKER, 1883);
-  client.begin(espClient);
-  client.setCleanSession(true);
+  espClient.connect(MQTT_BROKER, MQTT_PORT);
   while (!client.isConnected()) {
     Serial.println("MQTT disconnected, trigger reconnect.");
     // generate new client ID
     String clientId = "ESP-Strom-";
     clientId += String(random(0xffff), HEX);
-    if (client.connect(clientId.c_str())) {
+    if (client.connect(clientId.c_str(), "jan", "Start123!")) {
       Serial.println("MQTT connected");
-      //espClient.connect(MQTT_BROKER, 1883);
-      //client.begin(espClient);
-      //client.setCleanSession(true);
-      client.publish("/home/debug/electricity", "ESP-Strom: reconnected!");
+      client.publish("/bLiKur/debug/electricity", "ESP-Strom: reconnected!");
     } else {
       Serial.println("MQTT connection failed");
       Serial.print("Status: ");
@@ -163,6 +172,15 @@ void loop() {
       findUptime(); // look for uptime of power meter
       break;
     case 6:
+      findPhase1Power();
+      break;
+    case 7:
+      findPhase2Power();
+      break;
+    case 8:
+      findPhase3Power();
+      break;
+    case 9:
       publishMessage(); // send out via MQTT
       break;
   }
@@ -173,6 +191,7 @@ void debug_sml() {
     Serial.print(smlMessage[x], HEX);
     Serial.print(" ");
   }
+  Serial.println("");
   // show complete sml message every 20 seconds
   delay(20000);
 }
@@ -201,15 +220,13 @@ void findStartSequence() {
     else {
       startIndex = 0; // set index  back to 0 for startover
     }
-    client.update();
+    // client.update();
   }
 }
 
 void findStopSequence() {
   while (MeterSerial.available())
   {
-    // yield();
-
     inByte = MeterSerial.read();
     smlMessage[smlIndex] = inByte;
     smlIndex++;
@@ -224,12 +241,16 @@ void findStopSequence() {
 #endif
         stage = 2;
         stopIndex = 0;
+#ifdef _debug_sml
+        //stage = 0;
+        debug_sml();
+#endif
       }
     }
     else {
       stopIndex = 0;
     }
-    client.update();
+    // client.update();
   }
 }
 
@@ -256,14 +277,7 @@ void findPowerSequence() {
       startIndex = 0;
     }
   }
-  //  if (powerbytes == 3) {
-  //    currentpower = (power[0] << 8 | power[1] << 0); //merge 2 bytes into single variable to calculate power value
-  //  } else if (powerbytes == 2 && power[0] < 128) {
-  //    currentpower = power[0];
-  //  } else {
-  //    currentpower = (power[0] << 8) | ((byte) 00000000);
-  //    currentpower >>= 8;
-  //  }
+ 
   // write to final variable
   for (int j = 0; j < powerbytes - 1; j++) {
     currentpower += power[j];
@@ -271,6 +285,7 @@ void findPowerSequence() {
       currentpower <<= 8;
     }
   }
+  memset(power, 0, sizeof(power));
 }
 
 void findConsumptionSequence() {
@@ -283,6 +298,9 @@ void findConsumptionSequence() {
       startIndex++;
       if (startIndex == sizeof(consumptionSequence)) {
         consumedbytes = (smlMessage[x + 10] & 0x0F);
+#ifdef _debug_msg
+        Serial.println("Match found - Consumption Sequence:");
+#endif
         for (int y = 0; y < consumedbytes - 1; y++) {
           consumption[y] = smlMessage[x + y + 11];
 #ifdef _debug_msg
@@ -321,9 +339,19 @@ void findDeliveredSequence() {
       startIndex++;
       if (startIndex == sizeof(deliveredSequence)) {
         deliverbytes = (smlMessage[x + 10] & 0x0F);
+#ifdef _debug_msg
+        Serial.println("Match found - Delivered Sequence:");
+#endif
         for (int y = 0; y < deliverbytes - 1; y++) {
           delivered[y] = smlMessage[x + y + 11];
+#ifdef _debug_msg
+          Serial.print(String(delivered[y], HEX));
+          Serial.print(" ");
+#endif
         }
+#ifdef _debug_msg
+        Serial.println();
+#endif
         startIndex = 0;
         stage = 5;
       }
@@ -350,15 +378,18 @@ void findUptime() {
       startIndex++;
       if (startIndex == sizeof(uptimeSequence)) {
 #ifdef _debug_msg
-        Serial.print("Uptime (bytes): ");
+        Serial.println("Match found - Uptime Sequence:");
 #endif
         for (int y = 0; y < 4; y++) {
-          uptime[y] = smlMessage[x + y + 5];
+          uptime[y] = smlMessage[x + y + 12];
 #ifdef _debug_msg
           Serial.print(String(uptime[y], HEX));
           Serial.print(" ");
 #endif
         }
+#ifdef _debug_msg
+        Serial.println();
+#endif
         startIndex = 0;
         stage = 6;
       }
@@ -376,14 +407,110 @@ void findUptime() {
   uptimeTotal += uptime[3];
 }
 
+void findPhase1Power() {
+  byte temp; //temp variable to store loop search data
+  startIndex = 0; //start at position 0 of exctracted SML message
+  for (int x = 0; x < sizeof(smlMessage); x++) { //for as long there are element in the exctracted SML message
+    temp = smlMessage[x]; //set temp variable to 0,1,2 element in extracted SML message
+    if (temp == phase1[startIndex]) //compare with power sequence
+    {
+      startIndex++;
+      if (startIndex == sizeof(phase1)) //in complete sequence is found
+      {
+        // find number of bytes for power sequence since this is dynamically
+        phase1bytes = (smlMessage[x + 7] & 0x0F);
+        for (int y = 0; y < phase1bytes; y++) { //read the next byte(s) (the actual power value)
+          power[y] = smlMessage[x + y + 8]; //store into power array
+        }
+        stage = 7; // go to stage 3
+        startIndex = 0;
+      }
+    }
+    else {
+      startIndex = 0;
+    }
+  }
+  // write to final variable
+  for (int j = 0; j < phase1bytes - 1; j++) {
+    phase1power += power[j];
+    if (j < phase1bytes - 2) {
+      phase1power <<= 8;
+    }
+  }
+  memset(power, 0, sizeof(power));
+}
+
+void findPhase2Power() {
+  byte temp; //temp variable to store loop search data
+  startIndex = 0; //start at position 0 of exctracted SML message
+  for (int x = 0; x < sizeof(smlMessage); x++) { //for as long there are element in the exctracted SML message
+    temp = smlMessage[x]; //set temp variable to 0,1,2 element in extracted SML message
+    if (temp == phase2[startIndex]) //compare with power sequence
+    {
+      startIndex++;
+      if (startIndex == sizeof(phase2)) //in complete sequence is found
+      {
+        // find number of bytes for power sequence since this is dynamically
+        phase2bytes = (smlMessage[x + 7] & 0x0F);
+        for (int y = 0; y < phase2bytes; y++) { //read the next byte(s) (the actual power value)
+          power[y] = smlMessage[x + y + 8]; //store into power array
+        }
+        stage = 8; // go to stage 3
+        startIndex = 0;
+      }
+    }
+    else {
+      startIndex = 0;
+    }
+  }
+  // write to final variable
+  for (int j = 0; j < phase2bytes - 1; j++) {
+    phase2power += power[j];
+    if (j < phase2bytes - 2) {
+      phase2power <<= 8;
+    }
+  }
+  memset(power, 0, sizeof(power));
+}
+
+void findPhase3Power() {
+  byte temp; //temp variable to store loop search data
+  startIndex = 0; //start at position 0 of exctracted SML message
+  for (int x = 0; x < sizeof(smlMessage); x++) { //for as long there are element in the exctracted SML message
+    temp = smlMessage[x]; //set temp variable to 0,1,2 element in extracted SML message
+    if (temp == phase3[startIndex]) //compare with power sequence
+    {
+      startIndex++;
+      if (startIndex == sizeof(phase3)) //in complete sequence is found
+      {
+        // find number of bytes for power sequence since this is dynamically
+        phase3bytes = (smlMessage[x + 7] & 0x0F);
+        for (int y = 0; y < phase3bytes; y++) { //read the next byte(s) (the actual power value)
+          power[y] = smlMessage[x + y + 8]; //store into power array
+        }
+        stage = 9; // go to stage 3
+        startIndex = 0;
+      }
+    }
+    else {
+      startIndex = 0;
+    }
+  }
+  // write to final variable
+  for (int j = 0; j < phase3bytes - 1; j++) {
+    phase3power += power[j];
+    if (j < phase3bytes - 2) {
+      phase3power <<= 8;
+    }
+  }
+  memset(power, 0, sizeof(power));
+}
+
 void publishMessage() {
-#ifdef _debug_sml
-  debug_sml();
-#endif
 
   client.update();
 
-  // debug output
+  //  debug output
   //  Serial.print("getFreeHeap: ");
   //  Serial.println(ESP.getFreeHeap());
   //  Serial.print("getHeapFragmentation: ");
@@ -394,21 +521,26 @@ void publishMessage() {
   //  Serial.println(currentconsumption);
   //  Serial.print("Total delivered: ");
   //  Serial.println(deliveredTotal);
-  //  Serial.print("Current power (short): ");
-  //  Serial.println((signed short)currentpower);
+  //  Serial.print("Current power (long): ");
+  //  Serial.println((signed long)currentpower);
 
-  // currentconsumption scale 10⁻1 and unit is Wh => factor 10.000 for kWh
-  pubsuccess = true;
-  pubsuccess &= client.publish("/home/commodity/electricity/consumedDeciWatt", long2charArray(currentconsumption));
-  pubsuccess &= client.publish("/home/commodity/electricity/deliveredkwh", long2charArray(deliveredTotal));
-  pubsuccess &= client.publish("/home/commodity/electricity/currentWatt", short2charArray((signed short)currentpower));
-  pubsuccess &= client.publish("/home/commodity/electricity/uptime", long2charArray(uptimeTotal));
-  pubsuccess &= client.publish("/home/commodity/electricity/freeheap", long2charArray(ESP.getFreeHeap()));
-  pubsuccess &= client.publish("/home/commodity/electricity/freeblocksize", long2charArray(ESP.getMaxFreeBlockSize()));
-  pubsuccess &= client.publish("/home/commodity/electricity/heapfragmentation", short2charArray(ESP.getHeapFragmentation()));
+  doc["consumedDeciMilliWH"] = currentconsumption;
+  doc["deliveredDeciMilliWH"] = deliveredTotal;
+  doc["currentHundrethsWatt"] = (signed long)currentpower;
+  doc["uptime"] = uptimeTotal;
+  doc["phase1"] = phase1power;
+  doc["phase2"] = phase2power;
+  doc["phase3"] = phase3power;
+
+#ifdef _debug_msg
+  serializeJsonPretty(doc, Serial);
+  Serial.println("");
+#endif
+
+  serializeJson(doc, mqttjson);
 
   // if publish wasn't successful, try to reconnect
-  if (!pubsuccess) {
+  if (!client.publish("/bLiKur/commodity/electricity", mqttjson )) {
     Serial.println("Problems with publish occured...");
     mqtt_reconnect();
   }
@@ -419,23 +551,11 @@ void publishMessage() {
   memset(consumption, 0, sizeof(consumption));
   memset(delivered, 0, sizeof(delivered));
   memset(uptime, 0, sizeof(uptime));
+  phase1power = 0;
+  phase2power = 0;
+  phase3power = 0;
+  currentconsumption = 0;
   //reset case
   smlIndex = 0;
   stage = 0; // start over
-}
-
-char* long2charArray(const unsigned long value) {
-  tmpStr = "";
-  tmpStr += value;
-  tmpStr.toCharArray(publishValue, tmpStr.length() + 1);
-  tmpStr = "";
-  return publishValue;
-}
-
-char* short2charArray(const signed short value) {
-  tmpStr = "";
-  tmpStr += value;
-  tmpStr.toCharArray(publishValue, tmpStr.length() + 1);
-  tmpStr = "";
-  return publishValue;
 }
