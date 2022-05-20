@@ -2,7 +2,7 @@
 /*
     Application note: Read a Easymeter Q3MA1120 V6.02 electricity meter via
     phototransistor + 1k resistor interface and SML protocol
-    Version 0.2 - 06.05.2022
+    Version 0.3 - 20.05.2022
     Copyright (C) 2022  Jan Laudahn https://laudart.de
 
     credits:
@@ -58,6 +58,7 @@ const byte consumptionSequence[] = { 0x77, 0x07, 0x01, 0x00, 0x01, 0x08, 0x00, 0
 const byte deliveredSequence[] = { 0x77, 0x07, 0x01, 0x00, 0x02, 0x08, 0x00, 0xFF }; // sequence preceeding the delivered to grid power 15 byte to 1 byte (?)
 const byte vendorSequence[] = { 0x77, 0x07, 0x01, 0x00, 0x60, 0x32, 0x01, 0x01 }; // sequence preceeding the vendor shortname, 6 bytes to 3 byte in ASCII, here "HLY"
 const byte uptimeSequence[] = {0x77, 0x01, 0x0B, 0x09, 0x01, 0x45, 0x53, 0x59, 0x11, 0x03, 0x9C, 0x7B, 0xB6 }; // 12 bytes to 4 byte uptime
+bool foundSequence;
 int smlIndex; //index counter within smlMessage array
 int startIndex; //start index for start sequence search
 int stopIndex; //start index for stop sequence search
@@ -152,6 +153,7 @@ void mqtt_reconnect() {
 }
 
 void loop() {
+  client.update();
   switch (stage) {
     case 0:
       findStartSequence(); // look for start sequence
@@ -255,6 +257,7 @@ void findStopSequence() {
 }
 
 void findPowerSequence() {
+  foundSequence = false;
   byte temp; //temp variable to store loop search data
   startIndex = 0; //start at position 0 of exctracted SML message
   for (int x = 0; x < sizeof(smlMessage); x++) { //for as long there are element in the exctracted SML message
@@ -270,6 +273,7 @@ void findPowerSequence() {
           power[y] = smlMessage[x + y + 8]; //store into power array
         }
         stage = 3; // go to stage 3
+        foundSequence = true;
         startIndex = 0;
       }
     }
@@ -277,18 +281,23 @@ void findPowerSequence() {
       startIndex = 0;
     }
   }
- 
+
   // write to final variable
-  for (int j = 0; j < powerbytes - 1; j++) {
-    currentpower += power[j];
-    if (j < powerbytes - 2) {
-      currentpower <<= 8;
+  if (foundSequence) {
+    for (int j = 0; j < powerbytes - 1; j++) {
+      currentpower += power[j];
+      if (j < powerbytes - 2) {
+        currentpower <<= 8;
+      }
     }
+  } else {
+    stage = 0; // start over when sequence not found
   }
   memset(power, 0, sizeof(power));
 }
 
 void findConsumptionSequence() {
+  foundSequence = false;
   byte temp;
   startIndex = 0;
   for (int x = 0; x < sizeof(smlMessage); x++) {
@@ -312,6 +321,7 @@ void findConsumptionSequence() {
         Serial.println();
 #endif
         stage = 4;
+        foundSequence = true;
         startIndex = 0;
       }
     }
@@ -321,15 +331,20 @@ void findConsumptionSequence() {
   }
 
   // write to final variable
-  for (int j = 0; j < consumedbytes - 1; j++) {
-    currentconsumption += consumption[j];
-    if (j < consumedbytes - 2) {
-      currentconsumption <<= 8;
+  if (foundSequence) {
+    for (int j = 0; j < consumedbytes - 1; j++) {
+      currentconsumption += consumption[j];
+      if (j < consumedbytes - 2) {
+        currentconsumption <<= 8;
+      }
     }
+  } else {
+    stage = 0; // start over when sequence not found
   }
 }
 
 void findDeliveredSequence() {
+  foundSequence = false;
   byte temp;
   deliveredTotal = 0;
   startIndex = 0;
@@ -354,23 +369,28 @@ void findDeliveredSequence() {
 #endif
         startIndex = 0;
         stage = 5;
+        foundSequence = true;
       }
     } else {
       startIndex = 0;
     }
   }
   // value deliverbytes extends when power is delivered to grid!
-  for (int i = 0; i < deliverbytes - 1; i++) {
-    deliveredTotal += delivered[i];
-    if (i < deliverbytes - 2) {
-      deliveredTotal <<= 8;
+  if (foundSequence) {
+    for (int i = 0; i < deliverbytes - 1; i++) {
+      deliveredTotal += delivered[i];
+      if (i < deliverbytes - 2) {
+        deliveredTotal <<= 8;
+      }
     }
+  } else {
+    stage = 0; // start over when sequence not found
   }
 }
 
 void findUptime() {
+  foundSequence = false;
   byte temp;
-
   startIndex = 0;
   for (int x = 0; x < sizeof(smlMessage); x++) {
     temp = smlMessage[x];
@@ -392,22 +412,28 @@ void findUptime() {
 #endif
         startIndex = 0;
         stage = 6;
+        foundSequence = true;
       }
     } else {
       startIndex = 0;
     }
   }
   // combine to uptimeTotal
-  uptimeTotal = uptime[0];
-  uptimeTotal <<= 8;
-  uptimeTotal += uptime[1];
-  uptimeTotal <<= 8;
-  uptimeTotal += uptime[2];
-  uptimeTotal <<= 8;
-  uptimeTotal += uptime[3];
+  if (foundSequence) {
+    uptimeTotal = uptime[0];
+    uptimeTotal <<= 8;
+    uptimeTotal += uptime[1];
+    uptimeTotal <<= 8;
+    uptimeTotal += uptime[2];
+    uptimeTotal <<= 8;
+    uptimeTotal += uptime[3];
+  } else {
+    stage = 0; // start over when sequence not found
+  }
 }
 
 void findPhase1Power() {
+  foundSequence = false;
   byte temp; //temp variable to store loop search data
   startIndex = 0; //start at position 0 of exctracted SML message
   for (int x = 0; x < sizeof(smlMessage); x++) { //for as long there are element in the exctracted SML message
@@ -422,7 +448,8 @@ void findPhase1Power() {
         for (int y = 0; y < phase1bytes; y++) { //read the next byte(s) (the actual power value)
           power[y] = smlMessage[x + y + 8]; //store into power array
         }
-        stage = 7; // go to stage 3
+        stage = 7; // go to stage 7
+        foundSequence = true;
         startIndex = 0;
       }
     }
@@ -431,16 +458,21 @@ void findPhase1Power() {
     }
   }
   // write to final variable
-  for (int j = 0; j < phase1bytes - 1; j++) {
-    phase1power += power[j];
-    if (j < phase1bytes - 2) {
-      phase1power <<= 8;
+  if (foundSequence) {
+    for (int j = 0; j < phase1bytes - 1; j++) {
+      phase1power += power[j];
+      if (j < phase1bytes - 2) {
+        phase1power <<= 8;
+      }
     }
+  } else {
+    stage = 0; // start over when sequence not found
   }
   memset(power, 0, sizeof(power));
 }
 
 void findPhase2Power() {
+  foundSequence = false;
   byte temp; //temp variable to store loop search data
   startIndex = 0; //start at position 0 of exctracted SML message
   for (int x = 0; x < sizeof(smlMessage); x++) { //for as long there are element in the exctracted SML message
@@ -455,7 +487,8 @@ void findPhase2Power() {
         for (int y = 0; y < phase2bytes; y++) { //read the next byte(s) (the actual power value)
           power[y] = smlMessage[x + y + 8]; //store into power array
         }
-        stage = 8; // go to stage 3
+        stage = 8; // go to stage 8
+        foundSequence = true;
         startIndex = 0;
       }
     }
@@ -464,16 +497,21 @@ void findPhase2Power() {
     }
   }
   // write to final variable
-  for (int j = 0; j < phase2bytes - 1; j++) {
-    phase2power += power[j];
-    if (j < phase2bytes - 2) {
-      phase2power <<= 8;
+  if (foundSequence) {
+    for (int j = 0; j < phase2bytes - 1; j++) {
+      phase2power += power[j];
+      if (j < phase2bytes - 2) {
+        phase2power <<= 8;
+      }
     }
+  } else {
+    stage = 0; // start over when sequence not found
   }
   memset(power, 0, sizeof(power));
 }
 
 void findPhase3Power() {
+  foundSequence = false;
   byte temp; //temp variable to store loop search data
   startIndex = 0; //start at position 0 of exctracted SML message
   for (int x = 0; x < sizeof(smlMessage); x++) { //for as long there are element in the exctracted SML message
@@ -488,7 +526,8 @@ void findPhase3Power() {
         for (int y = 0; y < phase3bytes; y++) { //read the next byte(s) (the actual power value)
           power[y] = smlMessage[x + y + 8]; //store into power array
         }
-        stage = 9; // go to stage 3
+        stage = 9; // go to stage 9
+        foundSequence = true;
         startIndex = 0;
       }
     }
@@ -497,11 +536,15 @@ void findPhase3Power() {
     }
   }
   // write to final variable
-  for (int j = 0; j < phase3bytes - 1; j++) {
-    phase3power += power[j];
-    if (j < phase3bytes - 2) {
-      phase3power <<= 8;
+  if (foundSequence) {
+    for (int j = 0; j < phase3bytes - 1; j++) {
+      phase3power += power[j];
+      if (j < phase3bytes - 2) {
+        phase3power <<= 8;
+      }
     }
+  } else {
+    stage = 0; // start over when sequence not found
   }
   memset(power, 0, sizeof(power));
 }

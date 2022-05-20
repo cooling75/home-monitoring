@@ -2,7 +2,7 @@
 /*
     Application note: Read a Holley DTZ541-ZEBA (2021) electricity meter via
     phototransistor + 1k resistor interface and SML protocol
-    Version 1.10 - 25.04.2022
+    Version 1.13 - 18.05.2022
     Copyright (C) 2022  Jan Laudahn https://laudart.de
 
     credits:
@@ -32,15 +32,21 @@
 #include <ESP8266WiFi.h>
 #include <SoftwareSerial.h>
 #include <MQTTPubSubClient.h>
+#include <ArduinoJson.h>
 
 // WiFi and MQTT
 const char* SSID = "";
 const char* PSK = "";
 const char* MQTT_BROKER = "";
+const short MQTT_PORT = ;
 
+// transmission
 String tmpStr;
-char publishValue[20];
-bool pubsuccess;
+//char publishValue[20];
+//bool pubsuccess;
+StaticJsonDocument<200> doc;
+char mqttjson[256];
+
 
 // DATA
 byte inByte; //byte to store the serial buffer
@@ -52,6 +58,7 @@ const byte consumptionSequence[] = { 0x77, 0x07, 0x01, 0x00, 0x01, 0x08, 0x00, 0
 const byte deliveredSequence[] = { 0x77, 0x07, 0x01, 0x00, 0x02, 0x08, 0x00, 0xFF }; // sequence preceeding the delivered to grid power 15 byte to 1 byte (?)
 const byte vendorSequence[] = { 0x77, 0x07, 0x01, 0x00, 0x60, 0x32, 0x01, 0x01 }; // sequence preceeding the vendor shortname, 6 bytes to 3 byte in ASCII, here "HLY"
 const byte uptimeSequence[] = { 0x07, 0x01, 0x00, 0x62, 0x0A, 0xFF, 0xFF }; // 5 bytes to 4 byte uptime
+bool foundSequence;
 int smlIndex; //index counter within smlMessage array
 int startIndex; //start index for start sequence search
 int stopIndex; //start index for stop sequence search
@@ -67,12 +74,13 @@ unsigned long deliveredTotal;
 signed short currentpower; //variable to hold translated "Wirkleistung" value
 unsigned long currentconsumption; //variable to hold translated "Gesamtverbrauch" value
 
+// pins and logic
 int pin_d2 = 4;
+short failcount;
 
 SoftwareSerial MeterSerial(pin_d2, 3, true); // RX, TX, inverted mode(!)
 WiFiClient espClient;
-//PubSubClient client(espClient);
-MQTTPubSubClient client;
+MQTTPubSub::PubSubClient<256> client;
 
 // #define _debug_msg
 // #define _debug_sml
@@ -95,6 +103,11 @@ void setup() {
   WiFi.config(ip, dns, gateway, subnet);
 
   setup_wifi();
+  espClient.connect(MQTT_BROKER, MQTT_PORT);
+  client.begin(espClient);
+  client.setCleanSession(true);
+  client.setKeepAliveTimeout(10);
+  client.setTimeout(1000);
   mqtt_reconnect();
   Serial.println("Starting loop");
 }
@@ -113,32 +126,33 @@ void setup_wifi() {
 }
 
 void mqtt_reconnect() {
+  client.disconnect();
   // connect to broker again and connect start reconnecting mqtt client
-  espClient.connect(MQTT_BROKER, 1883);
-  client.begin(espClient);
-  client.setCleanSession(true);
-  while (!client.isConnected()) {
+  espClient.connect(MQTT_BROKER, MQTT_PORT);
+  while (!client.isConnected() && WiFi.status() == WL_CONNECTED) {
     Serial.println("MQTT disconnected, trigger reconnect.");
     // generate new client ID
     String clientId = "ESP-Strom-";
     clientId += String(random(0xffff), HEX);
     if (client.connect(clientId.c_str())) {
       Serial.println("MQTT connected");
-      //espClient.connect(MQTT_BROKER, 1883);
-      //client.begin(espClient);
-      //client.setCleanSession(true);
       client.publish("/home/debug/electricity", "ESP-Strom: reconnected!");
     } else {
       Serial.println("MQTT connection failed");
       Serial.print("Status: ");
       Serial.println(client.getReturnCode());
       Serial.println("Try again in 5s");
+      failcount++;
+      if (failcount > 12) {
+        ESP.restart();
+      }
       delay(5000);
     }
   }
 }
 
 void loop() {
+  client.update();
   switch (stage) {
     case 0:
       findStartSequence(); // look for start sequence
@@ -197,7 +211,7 @@ void findStartSequence() {
     else {
       startIndex = 0; // set index  back to 0 for startover
     }
-    client.update();
+    // client.update();
   }
 }
 
@@ -225,11 +239,12 @@ void findStopSequence() {
     else {
       stopIndex = 0;
     }
-    client.update();
+    // client.update();
   }
 }
 
 void findPowerSequence() {
+  foundSequence = false;
   byte temp; //temp variable to store loop search data
   startIndex = 0; //start at position 0 of exctracted SML message
   for (int x = 0; x < sizeof(smlMessage); x++) { //for as long there are element in the exctracted SML message
@@ -246,23 +261,30 @@ void findPowerSequence() {
         }
         stage = 3; // go to stage 3
         startIndex = 0;
+        foundSequence = true;
       }
     }
     else {
       startIndex = 0;
     }
   }
-  if (powerbytes == 3) {
-    currentpower = (power[0] << 8 | power[1] << 0); //merge 2 bytes into single variable to calculate power value
-  } else if (powerbytes == 2 && power[0] < 128) {
-    currentpower = power[0];
+  // write var only when powerSequence has been found
+  if (foundSequence) {
+    if (powerbytes == 3) {
+      currentpower = (power[0] << 8 | power[1] << 0); //merge 2 bytes into single variable to calculate power value
+    } else if (powerbytes == 2 && power[0] < 128) {
+      currentpower = power[0];
+    } else {
+      currentpower = (power[0] << 8) | ((byte) 00000000);
+      currentpower >>= 8;
+    }
   } else {
-    currentpower = (power[0] << 8) | ((byte) 00000000);
-    currentpower >>= 8;
+    stage = 0; // start over when sequence not found
   }
 }
 
 void findConsumptionSequence() {
+  foundSequence = false;
   byte temp;
   startIndex = 0;
   for (int x = 0; x < sizeof(smlMessage); x++) {
@@ -285,6 +307,7 @@ void findConsumptionSequence() {
 #endif
         stage = 4;
         startIndex = 0;
+        foundSequence = true;
       }
     }
     else {
@@ -292,16 +315,21 @@ void findConsumptionSequence() {
     }
   }
 
-  currentconsumption = consumption[0];
-  currentconsumption <<= 8;
-  currentconsumption += consumption[1];
-  currentconsumption <<= 8;
-  currentconsumption += consumption[2];
-  currentconsumption <<= 8;
-  currentconsumption += consumption[3];
+  if (foundSequence) {
+    currentconsumption = consumption[0];
+    currentconsumption <<= 8;
+    currentconsumption += consumption[1];
+    currentconsumption <<= 8;
+    currentconsumption += consumption[2];
+    currentconsumption <<= 8;
+    currentconsumption += consumption[3];
+  } else {
+    stage = 0; // start over when sequence not found
+  }
 }
 
 void findDeliveredSequence() {
+  foundSequence = false;
   byte temp;
   deliveredTotal = 0;
   startIndex = 0;
@@ -316,23 +344,29 @@ void findDeliveredSequence() {
         }
         startIndex = 0;
         stage = 5;
+        foundSequence = true;
       }
     } else {
       startIndex = 0;
     }
   }
-  // value deliverbytes extends when power is delivered to grid!
-  for (int i = 0; i < deliverbytes - 1; i++) {
-    deliveredTotal += delivered[i];
-    if (i < deliverbytes - 2) {
-      deliveredTotal <<= 8;
+
+  if (foundSequence) {
+    // value deliverbytes extends when power is delivered to grid!
+    for (int i = 0; i < deliverbytes - 1; i++) {
+      deliveredTotal += delivered[i];
+      if (i < deliverbytes - 2) {
+        deliveredTotal <<= 8;
+      }
     }
+  } else {
+    stage = 0; // start over when sequence not found
   }
 }
 
 void findUptime() {
   byte temp;
-
+  foundSequence = false;
   startIndex = 0;
   for (int x = 0; x < sizeof(smlMessage); x++) {
     temp = smlMessage[x];
@@ -351,19 +385,24 @@ void findUptime() {
         }
         startIndex = 0;
         stage = 6;
+        foundSequence = true;
       }
     } else {
       startIndex = 0;
     }
   }
-  // combine to uptimeTotal
-  uptimeTotal = uptime[0];
-  uptimeTotal <<= 8;
-  uptimeTotal += uptime[1];
-  uptimeTotal <<= 8;
-  uptimeTotal += uptime[2];
-  uptimeTotal <<= 8;
-  uptimeTotal += uptime[3];
+  if (foundSequence) {
+    // combine to uptimeTotal
+    uptimeTotal = uptime[0];
+    uptimeTotal <<= 8;
+    uptimeTotal += uptime[1];
+    uptimeTotal <<= 8;
+    uptimeTotal += uptime[2];
+    uptimeTotal <<= 8;
+    uptimeTotal += uptime[3];
+  } else {
+    stage = 0; // start over when sequence not found
+  }
 }
 
 void publishMessage() {
@@ -381,34 +420,34 @@ void publishMessage() {
   //    mqtt_reconnect();
   //  }
 
-  client.update();
+  // client.update();
 
   // debug output
-//  Serial.print("getFreeHeap: ");
-//  Serial.println(ESP.getFreeHeap());
-//  Serial.print("getHeapFragmentation: ");
-//  Serial.println(ESP.getHeapFragmentation());
-//  Serial.print("getMaxFreeBlockSize: ");
-//  Serial.println(ESP.getMaxFreeBlockSize());
-//  Serial.print("Total consumed: ");
-//  Serial.println(currentconsumption);
-//  Serial.print("Total delivered: ");
-//  Serial.println(deliveredTotal);
-//  Serial.print("Current power (short): ");
-//  Serial.println((signed short)currentpower);
+  //  Serial.print("getFreeHeap: ");
+  //  Serial.println(ESP.getFreeHeap());
+  //  Serial.print("getHeapFragmentation: ");
+  //  Serial.println(ESP.getHeapFragmentation());
+  //  Serial.print("getMaxFreeBlockSize: ");
+  //  Serial.println(ESP.getMaxFreeBlockSize());
+  //  Serial.print("Total consumed: ");
+  //  Serial.println(currentconsumption);
+  //  Serial.print("Total delivered: ");
+  //  Serial.println(deliveredTotal);
+  //  Serial.print("Current power (short): ");
+  //  Serial.println((signed short)currentpower);
 
-  // currentconsumption scale 10⁻1 and unit is Wh => factor 10.000 for kWh
-  pubsuccess = true;
-  pubsuccess &= client.publish("/home/commodity/electricity/consumedDeciWatt", long2charArray(currentconsumption));
-  pubsuccess &= client.publish("/home/commodity/electricity/deliveredkwh", long2charArray(deliveredTotal));
-  pubsuccess &= client.publish("/home/commodity/electricity/currentWatt", short2charArray((signed short)currentpower));
-  pubsuccess &= client.publish("/home/commodity/electricity/uptime", long2charArray(uptimeTotal));
-  pubsuccess &= client.publish("/home/commodity/electricity/freeheap", long2charArray(ESP.getFreeHeap()));
-  pubsuccess &= client.publish("/home/commodity/electricity/freeblocksize", long2charArray(ESP.getMaxFreeBlockSize()));
-  pubsuccess &= client.publish("/home/commodity/electricity/heapfragmentation", short2charArray(ESP.getHeapFragmentation()));
+  doc["consumedDeciWatt"] = currentconsumption;
+  doc["deliveredkwh"] = deliveredTotal;
+  doc["currentWatt"] = (signed short)currentpower;
+  doc["uptime"] = uptimeTotal;
+  doc["freeheap"] = ESP.getFreeHeap();
+  doc["freeblocksize"] = ESP.getMaxFreeBlockSize();
+  doc["heapfragmentation"] = ESP.getHeapFragmentation();
+
+  serializeJson(doc, mqttjson);
 
   // if publish wasn't successful, try to reconnect
-  if (!pubsuccess) {
+  if (!client.publish("/home/commodity/electricity", mqttjson )) {
     Serial.println("Problems with publish occured...");
     mqtt_reconnect();
   }
@@ -422,20 +461,4 @@ void publishMessage() {
   //reset case
   smlIndex = 0;
   stage = 0; // start over
-}
-
-char* long2charArray(const unsigned long value) {
-  tmpStr = "";
-  tmpStr += value;
-  tmpStr.toCharArray(publishValue, tmpStr.length() + 1);
-  tmpStr = "";
-  return publishValue;
-}
-
-char* short2charArray(const signed short value) {
-  tmpStr = "";
-  tmpStr += value;
-  tmpStr.toCharArray(publishValue, tmpStr.length() + 1);
-  tmpStr = "";
-  return publishValue;
 }
