@@ -1,13 +1,17 @@
 # home-monitoring
 
-Project to monitor electricity, water and natural gas consumption. Hardware is a D1Mini ESP8266 microcontroller development board for electricity and gas, water is based on the ESP32-CAM board.
+Project to monitor electricity, water and natural gas consumption. Hardware is a D1Mini ESP8266 microcontroller development board for electricity and gas, water would be based on the ESP32-CAM board.
+
+![Grafana electricity dashboard](img/grafana_electricity.png)
+
+We have a small (max. 600 W) solar power plant on our balcony. So the negative consumption and the 'self produced breakdown' as well as the other data on the right comes from this. Luckily there is a very nice project for our inverter called [grott](https://github.com/johanmeijer/grott). So we get the data directly via MQTT in our local network.
 
 ## Commodities
 
 ### Electricity
 
-Power meter is a Holleytech DTZ 541-ZEBA from or version 2021.  
-The date is important since the SML byte order has changed from 2019 to 2021.
+Currently code for power meters 'Holleytech DTZ 541-ZEBA' (2021) and 'Easymeter Q3MA' is available.
+For the Holleytech the date/version is important since the SML byte order has changed from 2019 to 2021 version.
 
 #### Sensor
 
@@ -23,18 +27,21 @@ Current setup consists of two pieces of stripboard. One holds the transistor and
 
 The sensor is a simple reed switch or reed contact. The last number on the meter contains a magnet which increments the gas meter count by 0.01 m³ when it passes the zero. I used the debounce example of the Arduino IDE and extended it by WiFi manager and MQTT client for value submission.
 
+![Grafana natural gas consumption dashboard](img/grafana_gas.png)
+
 ### Water
 
 Not started yet.
 
 ## Data processing
 
-My approach is based on a K3s cluster on Raspberry Pis (because it is already available), but native or docker software deployment should work alike.
+My approach is completely based on a K3s cluster on Raspberry Pis (because it is already available), but native or docker deployments works also. For an external setup I use a Ubuntu EC2 instance on the Amazon AWS cloud with docker-compose. 
 
 ```mermaid
 graph LR;
-A(ESP8266)-->|MQTT| B(mosquitto broker on K3s);
+A(ESP8266)-->|MQTT| B(mosquitto MQTT broker on K3s);
 B-->|telegraf| C(InfluxDB);
+C --> D(Grafana dashboard)
 ```
 
 ### Storage (InfluxDB)
