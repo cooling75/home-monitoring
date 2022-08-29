@@ -27,6 +27,8 @@ Part list:
 
 ![write-red head](img/writeReadHead.png)
 
+![write-red head](img/writeReadHead_schematic.png)
+
 ### Gas
 
 #### Sensor
