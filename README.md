@@ -15,9 +15,15 @@ For the Holleytech the date/version is important since the SML byte order has ch
 
 #### Sensor
 
-As a write-read head I use a [Osram SFH 3100 F](https://www.osram.com/ecat/Radial%20Mini%20Sidelooker%20SFH%203100%20F/com/en/class_pim_web_catalog_103489/prd_pim_device_2219661/) phototransistor and 1 kOhm resistor. For testing purposes I cut a hole into a piece of cardboard at the position of the diode of the power meter. The first examples I did with an Arduino Uno for byte sequence debugging.
+As a write-read head I use a [Osram SFH 3100 F](https://www.osram.com/ecat/Radial%20Mini%20Sidelooker%20SFH%203100%20F/com/en/class_pim_web_catalog_103489/prd_pim_device_2219661/) phototransistor and 1 kOhm resistor. For testing purposes I cut a hole into a piece of cardboard at the position of the diode of the power meter. The first examples I did with an Arduino Uno for byte sequence debugging. Now I use a Wemos D1mini because of its direct WiFi capabilities.
 
-Current setup consists of two pieces of stripboard. One holds the transistor and the other one the D1Mini plus pulldown resistor connected with a pair of short cables. (Image is wrong regarding the pulldown resistor.)
+The pulldown resistor gives a clean state to the input pin D2. The two capacitors are for stability reasons.
+
+Part list:
+* 1 kOhm resistor
+* IR phototransistor
+* 100 nF ceramic capacitor
+* 3300 uF electrolyt capacitor
 
 ![write-red head](img/writeReadHead.png)
 
