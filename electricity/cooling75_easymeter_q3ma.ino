@@ -553,41 +553,46 @@ void publishMessage() {
 
   client.update();
 
-  //  debug output
-  //  Serial.print("getFreeHeap: ");
-  //  Serial.println(ESP.getFreeHeap());
-  //  Serial.print("getHeapFragmentation: ");
-  //  Serial.println(ESP.getHeapFragmentation());
-  //  Serial.print("getMaxFreeBlockSize: ");
-  //  Serial.println(ESP.getMaxFreeBlockSize());
-  //  Serial.print("Total consumed: ");
-  //  Serial.println(currentconsumption);
-  //  Serial.print("Total delivered: ");
-  //  Serial.println(deliveredTotal);
-  //  Serial.print("Current power (long): ");
-  //  Serial.println((signed long)currentpower);
+  // check if values are feasible
+  if (phase1power > 1000000 || phase2power > 1000000 || phase3power > 1000000) {
+    Serial.println("Invalid values... skipping this publish.");
+  } else {
 
-  doc["consumedDeciMilliWH"] = currentconsumption;
-  doc["deliveredDeciMilliWH"] = deliveredTotal;
-  doc["currentHundrethsWatt"] = (signed long)currentpower;
-  doc["uptime"] = uptimeTotal;
-  doc["phase1"] = phase1power;
-  doc["phase2"] = phase2power;
-  doc["phase3"] = phase3power;
+    //  debug output
+    //  Serial.print("getFreeHeap: ");
+    //  Serial.println(ESP.getFreeHeap());
+    //  Serial.print("getHeapFragmentation: ");
+    //  Serial.println(ESP.getHeapFragmentation());
+    //  Serial.print("getMaxFreeBlockSize: ");
+    //  Serial.println(ESP.getMaxFreeBlockSize());
+    //  Serial.print("Total consumed: ");
+    //  Serial.println(currentconsumption);
+    //  Serial.print("Total delivered: ");
+    //  Serial.println(deliveredTotal);
+    //  Serial.print("Current power (long): ");
+    //  Serial.println((signed long)currentpower);
+
+    doc["consumedDeciMilliWH"] = currentconsumption;
+    doc["deliveredDeciMilliWH"] = deliveredTotal;
+    doc["currentHundrethsWatt"] = (signed long)currentpower;
+    doc["uptime"] = uptimeTotal;
+    doc["phase1"] = (signed int64_t)phase1power;
+    doc["phase2"] = (signed int64_t)phase2power;
+    doc["phase3"] = (signed int64_t)phase3power;
 
 #ifdef _debug_msg
-  serializeJsonPretty(doc, Serial);
-  Serial.println("");
+    serializeJsonPretty(doc, Serial);
+    Serial.println("");
 #endif
 
-  serializeJson(doc, mqttjson);
+    serializeJson(doc, mqttjson);
 
-  // if publish wasn't successful, try to reconnect
-  if (!client.publish("/bLiKur/commodity/electricity", mqttjson )) {
-    Serial.println("Problems with publish occured...");
-    mqtt_reconnect();
+    // if publish wasn't successful, try to reconnect
+    if (!client.publish("/bLiKur/commodity/electricity", mqttjson )) {
+      Serial.println("Problems with publish occured...");
+      mqtt_reconnect();
+    }
   }
-
   // clear the buffers
   memset(smlMessage, 0, sizeof(smlMessage));
   memset(power, 0, sizeof(power));
