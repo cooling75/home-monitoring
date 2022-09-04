@@ -17,7 +17,7 @@ For the Holleytech the date/version is important since the SML byte order has ch
 
 As a write-read head I use a [Osram SFH 3100 F](https://www.osram.com/ecat/Radial%20Mini%20Sidelooker%20SFH%203100%20F/com/en/class_pim_web_catalog_103489/prd_pim_device_2219661/) phototransistor and 1 kOhm resistor. For testing purposes I cut a hole into a piece of cardboard at the position of the diode of the power meter. The first examples I did with an Arduino Uno for byte sequence debugging. Now I use a Wemos D1mini because of its direct WiFi capabilities.
 
-The pulldown resistor gives a clean state to the input pin D2. The two capacitors are for stability reasons.
+The pulldown resistor gives a clean state to the input pin D2. The two capacitors are for stability reasons of the D1 mini following [this site](https://blog.thesen.eu/esp8266-reset-probleme-loesen-und-relais-stabil-schalten/) and [this site](http://stefanfrings.de/esp8266/index.html#stability) unfortunately both in german language. If there is the need, just ask me. ;)
 
 Part list:
 * 1 kOhm resistor
