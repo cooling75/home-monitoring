@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
       - name: grott
-        image: ledidobe/grottrpi
+        image: ledidobe/grottrpi:2.7.6
         resources:
           limits:
             cpu: "50m"
