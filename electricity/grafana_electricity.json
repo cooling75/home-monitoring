@@ -3,7 +3,10 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": "-- Grafana --",
+        "datasource": {
+          "type": "datasource",
+          "uid": "grafana"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -22,19 +25,22 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 1,
-  "iteration": 1648204968079,
+  "id": 12,
   "links": [],
   "liveNow": false,
   "panels": [
     {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "Hn-AJZWRz"
+      },
       "description": "Total kWh consumed",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 2,
+          "decimals": 3,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -64,7 +70,7 @@
         },
         "textMode": "auto"
       },
-      "pluginVersion": "8.3.4",
+      "pluginVersion": "9.1.5",
       "targets": [
         {
           "datasource": {
@@ -81,7 +87,7 @@
             [
               {
                 "params": [
-                  "value"
+                  "consumedDeciWatt"
                 ],
                 "type": "field"
               },
@@ -101,7 +107,7 @@
             {
               "key": "topic",
               "operator": "=",
-              "value": "/home/commodity/electricity/consumedDeciWatt"
+              "value": "/home/commodity/electricity"
             }
           ]
         }
@@ -110,6 +116,10 @@
       "type": "stat"
     },
     {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "Hn-AJZWRz"
+      },
       "description": "",
       "fieldConfig": {
         "defaults": {
@@ -164,6 +174,7 @@
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
+          "showLegend": true,
           "values": [
             "percent"
           ]
@@ -177,12 +188,12 @@
           "values": false
         },
         "tooltip": {
-          "mode": "single"
+          "mode": "single",
+          "sort": "none"
         }
       },
       "targets": [
         {
-          "alias": "delivered to grid",
           "datasource": {
             "type": "influxdb",
             "uid": "Hn-AJZWRz"
@@ -193,73 +204,14 @@
                 "$__interval"
               ],
               "type": "time"
-            },
-            {
-              "params": [
-                "null"
-              ],
-              "type": "fill"
-            }
-          ],
-          "measurement": "mqtt_electricity",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "refId": "A",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "value"
-                ],
-                "type": "field"
-              },
-              {
-                "params": [],
-                "type": "last"
-              },
-              {
-                "params": [
-                  " / 10000"
-                ],
-                "type": "math"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "topic",
-              "operator": "=",
-              "value": "/home/commodity/electricity/deliveredkwh"
-            }
-          ]
-        },
-        {
-          "alias": "produced",
-          "datasource": {
-            "type": "influxdb",
-            "uid": "Hn-AJZWRz"
-          },
-          "groupBy": [
-            {
-              "params": [
-                "$__interval"
-              ],
-              "type": "time"
-            },
-            {
-              "params": [
-                "null"
-              ],
-              "type": "fill"
             }
           ],
           "hide": true,
           "measurement": "growatt",
           "orderByTime": "ASC",
-          "policy": "default",
+          "policy": "autogen",
           "refId": "B",
-          "resultFormat": "time_series",
+          "resultFormat": "table",
           "select": [
             [
               {
@@ -290,10 +242,58 @@
         },
         {
           "datasource": {
+            "type": "influxdb",
+            "uid": "Hn-AJZWRz"
+          },
+          "groupBy": [
+            {
+              "params": [
+                "$__interval"
+              ],
+              "type": "time"
+            }
+          ],
+          "hide": false,
+          "measurement": "mqtt_electricity",
+          "orderByTime": "ASC",
+          "policy": "autogen",
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "deliveredkwh"
+                ],
+                "type": "field"
+              },
+              {
+                "params": [],
+                "type": "last"
+              },
+              {
+                "params": [
+                  " / 10000"
+                ],
+                "type": "math"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "topic",
+              "operator": "=",
+              "value": "/home/commodity/electricity"
+            }
+          ]
+        },
+        {
+          "datasource": {
+            "name": "Expression",
             "type": "__expr__",
             "uid": "__expr__"
           },
-          "expression": "$B - $A",
+          "expression": "$B-$A",
           "hide": false,
           "refId": "C",
           "type": "math"
@@ -303,6 +303,10 @@
       "type": "piechart"
     },
     {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "Hn-AJZWRz"
+      },
       "description": "Add costs per kWh in query C directly, since no variables are allowed in expressions.",
       "fieldConfig": {
         "defaults": {
@@ -335,6 +339,8 @@
       "id": 22,
       "options": {
         "displayMode": "gradient",
+        "minVizHeight": 10,
+        "minVizWidth": 0,
         "orientation": "vertical",
         "reduceOptions": {
           "calcs": [
@@ -345,10 +351,9 @@
         },
         "showUnfilled": true
       },
-      "pluginVersion": "8.3.4",
+      "pluginVersion": "9.1.5",
       "targets": [
         {
-          "alias": "produced",
           "datasource": {
             "type": "influxdb",
             "uid": "Hn-AJZWRz"
@@ -359,21 +364,60 @@
                 "$__interval"
               ],
               "type": "time"
-            },
+            }
+          ],
+          "hide": true,
+          "measurement": "mqtt_electricity",
+          "orderByTime": "ASC",
+          "policy": "autogen",
+          "refId": "A",
+          "resultFormat": "time_series",
+          "select": [
+            [
+              {
+                "params": [
+                  "deliveredkwh"
+                ],
+                "type": "field"
+              },
+              {
+                "params": [],
+                "type": "last"
+              },
+              {
+                "params": [
+                  " / 10000"
+                ],
+                "type": "math"
+              }
+            ]
+          ],
+          "tags": [
+            {
+              "key": "topic",
+              "operator": "=",
+              "value": "/home/commodity/electricity"
+            }
+          ]
+        },
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "Hn-AJZWRz"
+          },
+          "groupBy": [
             {
               "params": [
-                "null"
+                "$__interval"
               ],
-              "type": "fill"
+              "type": "time"
             }
           ],
           "hide": true,
           "measurement": "growatt",
           "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT last(\"values_epvtotal\")  / 10 FROM \"growatt\" WHERE (\"topic\" = 'energy/growatt') AND $timeFilter GROUP BY time($__interval) fill(null)",
-          "rawQuery": false,
-          "refId": "A",
+          "policy": "autogen",
+          "refId": "B",
           "resultFormat": "time_series",
           "select": [
             [
@@ -404,67 +448,12 @@
           ]
         },
         {
-          "alias": "delivered",
           "datasource": {
-            "type": "influxdb",
-            "uid": "Hn-AJZWRz"
-          },
-          "groupBy": [
-            {
-              "params": [
-                "$__interval"
-              ],
-              "type": "time"
-            },
-            {
-              "params": [
-                "null"
-              ],
-              "type": "fill"
-            }
-          ],
-          "hide": true,
-          "measurement": "mqtt_electricity",
-          "orderByTime": "ASC",
-          "policy": "default",
-          "query": "SELECT last(\"value\")  / 10000 FROM \"mqtt_electricity\" WHERE (\"topic\" = '/home/commodity/electricity/deliveredkwh') AND $timeFilter GROUP BY time($__interval) fill(null)",
-          "rawQuery": false,
-          "refId": "B",
-          "resultFormat": "time_series",
-          "select": [
-            [
-              {
-                "params": [
-                  "value"
-                ],
-                "type": "field"
-              },
-              {
-                "params": [],
-                "type": "last"
-              },
-              {
-                "params": [
-                  " / 10000"
-                ],
-                "type": "math"
-              }
-            ]
-          ],
-          "tags": [
-            {
-              "key": "topic",
-              "operator": "=",
-              "value": "/home/commodity/electricity/deliveredkwh"
-            }
-          ]
-        },
-        {
-          "datasource": {
+            "name": "Expression",
             "type": "__expr__",
             "uid": "__expr__"
           },
-          "expression": "($A - $B)*0.4354",
+          "expression": "($B-$A)*$costsperkwh",
           "hide": false,
           "refId": "C",
           "type": "math"
@@ -474,6 +463,10 @@
       "type": "bargauge"
     },
     {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "Hn-AJZWRz"
+      },
       "description": "",
       "fieldConfig": {
         "defaults": {
@@ -537,7 +530,7 @@
         "text": {},
         "textMode": "auto"
       },
-      "pluginVersion": "8.3.4",
+      "pluginVersion": "9.1.5",
       "targets": [
         {
           "datasource": {
@@ -578,6 +571,10 @@
       "type": "stat"
     },
     {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "Hn-AJZWRz"
+      },
       "description": "",
       "fieldConfig": {
         "defaults": {
@@ -620,7 +617,7 @@
         "text": {},
         "textMode": "auto"
       },
-      "pluginVersion": "8.3.4",
+      "pluginVersion": "9.1.5",
       "targets": [
         {
           "datasource": {
@@ -666,6 +663,10 @@
       "type": "stat"
     },
     {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "Hn-AJZWRz"
+      },
       "description": "",
       "fieldConfig": {
         "defaults": {
@@ -708,7 +709,7 @@
         "text": {},
         "textMode": "auto"
       },
-      "pluginVersion": "8.3.4",
+      "pluginVersion": "9.1.5",
       "targets": [
         {
           "alias": "Watt",
@@ -726,7 +727,7 @@
             [
               {
                 "params": [
-                  "value"
+                  "deliveredkwh"
                 ],
                 "type": "field"
               },
@@ -746,7 +747,7 @@
             {
               "key": "topic",
               "operator": "=",
-              "value": "/home/commodity/electricity/deliveredkwh"
+              "value": "/home/commodity/electricity"
             }
           ]
         }
@@ -755,6 +756,10 @@
       "type": "stat"
     },
     {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "Hn-AJZWRz"
+      },
       "description": "",
       "fieldConfig": {
         "defaults": {
@@ -797,7 +802,7 @@
         "text": {},
         "textMode": "auto"
       },
-      "pluginVersion": "8.3.4",
+      "pluginVersion": "9.1.5",
       "targets": [
         {
           "datasource": {
@@ -843,6 +848,10 @@
       "type": "stat"
     },
     {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "Hn-AJZWRz"
+      },
       "description": "",
       "fieldConfig": {
         "defaults": {
@@ -885,7 +894,7 @@
         "text": {},
         "textMode": "auto"
       },
-      "pluginVersion": "8.3.4",
+      "pluginVersion": "9.1.5",
       "targets": [
         {
           "datasource": {
@@ -931,6 +940,10 @@
       "type": "stat"
     },
     {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "Hn-AJZWRz"
+      },
       "description": "Uptime of smart meter",
       "fieldConfig": {
         "defaults": {
@@ -977,7 +990,7 @@
         "text": {},
         "textMode": "auto"
       },
-      "pluginVersion": "8.3.4",
+      "pluginVersion": "9.1.5",
       "targets": [
         {
           "datasource": {
@@ -1007,7 +1020,7 @@
             [
               {
                 "params": [
-                  "value"
+                  "uptime"
                 ],
                 "type": "field"
               },
@@ -1027,7 +1040,7 @@
             {
               "key": "topic",
               "operator": "=",
-              "value": "/home/commodity/electricity/uptime"
+              "value": "/home/commodity/electricity"
             }
           ]
         }
@@ -1036,6 +1049,10 @@
       "type": "stat"
     },
     {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "Hn-AJZWRz"
+      },
       "description": "",
       "fieldConfig": {
         "defaults": {
@@ -1078,7 +1095,7 @@
         "text": {},
         "textMode": "auto"
       },
-      "pluginVersion": "8.3.4",
+      "pluginVersion": "9.1.5",
       "targets": [
         {
           "datasource": {
@@ -1124,6 +1141,10 @@
       "type": "stat"
     },
     {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "Hn-AJZWRz"
+      },
       "description": "",
       "fieldConfig": {
         "defaults": {
@@ -1166,7 +1187,7 @@
         "text": {},
         "textMode": "auto"
       },
-      "pluginVersion": "8.3.4",
+      "pluginVersion": "9.1.5",
       "targets": [
         {
           "datasource": {
@@ -1212,6 +1233,10 @@
       "type": "stat"
     },
     {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "Hn-AJZWRz"
+      },
       "description": "Current power consumption from or delivery to grid.",
       "fieldConfig": {
         "defaults": {
@@ -1219,6 +1244,8 @@
             "mode": "continuous-GrYlRd"
           },
           "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "left",
             "barAlignment": 0,
@@ -1297,10 +1324,12 @@
             "max"
           ],
           "displayMode": "list",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "multi"
+          "mode": "multi",
+          "sort": "none"
         }
       },
       "targets": [
@@ -1333,7 +1362,7 @@
             [
               {
                 "params": [
-                  "value"
+                  "currentWatt"
                 ],
                 "type": "field"
               },
@@ -1347,7 +1376,7 @@
             {
               "key": "topic",
               "operator": "=",
-              "value": "/home/commodity/electricity/currentWatt"
+              "value": "/home/commodity/electricity"
             }
           ]
         },
@@ -1410,6 +1439,10 @@
       "type": "timeseries"
     },
     {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "Hn-AJZWRz"
+      },
       "description": "",
       "fieldConfig": {
         "defaults": {
@@ -1417,6 +1450,8 @@
             "mode": "continuous-YlRd"
           },
           "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisGridShow": true,
             "axisLabel": "",
             "axisPlacement": "auto",
@@ -1534,10 +1569,12 @@
         "legend": {
           "calcs": [],
           "displayMode": "list",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "single"
+          "mode": "single",
+          "sort": "none"
         }
       },
       "pluginVersion": "8.3.4",
@@ -1566,7 +1603,7 @@
           "measurement": "mqtt_consumer",
           "orderByTime": "ASC",
           "policy": "default",
-          "query": "SELECT (last(\"value\")  / 10000 -first(\"value\") / 10000)*$costsperkwh FROM \"mqtt_electricity\" WHERE (\"topic\" = '/home/commodity/electricity/consumedDeciWatt') GROUP BY time(1d) fill(null) tz('Europe/Berlin')",
+          "query": "SELECT (last(\"consumedDeciWatt\")  / 10000 -first(\"consumedDeciWatt\") / 10000)*$costsperkwh FROM \"mqtt_electricity\" WHERE (\"topic\" = '/home/commodity/electricity') GROUP BY time(1d) fill(null) tz('Europe/Berlin')",
           "rawQuery": true,
           "refId": "C",
           "resultFormat": "time_series",
@@ -1622,7 +1659,7 @@
           "measurement": "mqtt_consumer",
           "orderByTime": "ASC",
           "policy": "default",
-          "query": "SELECT last(\"value\")  / 10000 -first(\"value\") / 10000 FROM \"mqtt_electricity\" WHERE (\"topic\" = '/home/commodity/electricity/consumedDeciWatt') GROUP BY time(1d) fill(null) tz('Europe/Berlin')",
+          "query": "SELECT last(\"consumedDeciWatt\")  / 10000 -first(\"consumedDeciWatt\") / 10000 FROM \"mqtt_electricity\" WHERE (\"topic\" = '/home/commodity/electricity') GROUP BY time(1d) fill(null) tz('Europe/Berlin')",
           "rawQuery": true,
           "refId": "B",
           "resultFormat": "time_series",
@@ -1678,7 +1715,7 @@
           "measurement": "mqtt_consumer",
           "orderByTime": "ASC",
           "policy": "default",
-          "query": "SELECT last(\"value\")  / 10000 - first(\"value\") / 10000 FROM \"mqtt_electricity\" WHERE (\"topic\" = '/home/commodity/electricity/deliveredkwh') GROUP BY time(1d) fill(null) tz('Europe/Berlin')",
+          "query": "SELECT last(\"deliveredkwh\")  / 10000 - first(\"deliveredkwh\") / 10000 FROM \"mqtt_electricity\" WHERE (\"topic\" = '/home/commodity/electricity') GROUP BY time(1d) fill(null) tz('Europe/Berlin')",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series",
@@ -1716,6 +1753,10 @@
       "type": "timeseries"
     },
     {
+      "datasource": {
+        "type": "influxdb",
+        "uid": "Hn-AJZWRz"
+      },
       "description": "",
       "fieldConfig": {
         "defaults": {
@@ -1723,6 +1764,8 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
@@ -1757,8 +1800,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "dark-red",
-                "value": null
+                "color": "dark-red"
               }
             ]
           },
@@ -1796,10 +1838,12 @@
             "mean"
           ],
           "displayMode": "list",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": true
         },
         "tooltip": {
-          "mode": "single"
+          "mode": "multi",
+          "sort": "none"
         }
       },
       "targets": [
@@ -1833,7 +1877,7 @@
             [
               {
                 "params": [
-                  "value"
+                  "freeheap"
                 ],
                 "type": "field"
               },
@@ -1847,7 +1891,7 @@
             {
               "key": "topic",
               "operator": "=",
-              "value": "/home/commodity/electricity/freeheap"
+              "value": "/home/commodity/electricity"
             }
           ]
         },
@@ -1881,7 +1925,7 @@
             [
               {
                 "params": [
-                  "value"
+                  "freeblocksize"
                 ],
                 "type": "field"
               },
@@ -1895,7 +1939,7 @@
             {
               "key": "topic",
               "operator": "=",
-              "value": "/home/commodity/electricity/freeblocksize"
+              "value": "/home/commodity/electricity"
             }
           ]
         },
@@ -1929,7 +1973,7 @@
             [
               {
                 "params": [
-                  "value"
+                  "heapfragmentation"
                 ],
                 "type": "field"
               },
@@ -1943,7 +1987,7 @@
             {
               "key": "topic",
               "operator": "=",
-              "value": "/home/commodity/electricity/heapfragmentation"
+              "value": "/home/commodity/electricity"
             }
           ]
         }
@@ -1953,7 +1997,7 @@
     }
   ],
   "refresh": "1m",
-  "schemaVersion": 34,
+  "schemaVersion": 37,
   "style": "dark",
   "tags": [
     "power",
@@ -1989,13 +2033,21 @@
     ]
   },
   "time": {
-    "from": "now-3h",
+    "from": "now/d",
     "to": "now"
   },
-  "timepicker": {},
+  "timepicker": {
+    "refresh_intervals": [
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h"
+    ]
+  },
   "timezone": "browser",
   "title": "Electricity",
   "uid": "uZPpg4Wgz",
-  "version": 62,
+  "version": 13,
   "weekStart": "monday"
 }
