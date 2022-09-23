@@ -31,6 +31,8 @@ const char* MQTT_BROKER = "";
 const short MQTT_PORT = 18883;
 const char* mqtt_topic = "";
 const char* mqtt_debug_topic = "";
+const char* mqtt_user = "";
+const char* mqtt_pw = "";
 
 /*
  * Scroll down and add IP values that re suitable to you
@@ -122,7 +124,7 @@ void mqtt_reconnect() {
     // generate new client ID
     String clientId = "ESP-Strom-";
     clientId += String(random(0xffff), HEX);
-    if (client.connect(clientId.c_str(), "jan", "Start123!")) {
+    if (client.connect(clientId.c_str(), mqtt_user, mqtt_pw)) {
       Serial.println("MQTT connected");
       client.publish(mqtt_debug_topic, "ESP-Strom: reconnected!");
     } else {
