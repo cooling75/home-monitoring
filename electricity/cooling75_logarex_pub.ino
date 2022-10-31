@@ -23,12 +23,13 @@
 #include <SoftwareSerial.h>
 #include <MQTTPubSubClient.h>
 #include <ArduinoJson.h>
+#include <ArduinoOTA.h>
 
 // WiFi and MQTT
 const char* SSID = "";
 const char* PSK = "";
 const char* MQTT_BROKER = "";
-const short MQTT_PORT = 18883;
+const short MQTT_PORT = ;
 const char* mqtt_topic = "";
 const char* mqtt_debug_topic = "";
 const char* mqtt_user = "";
@@ -63,7 +64,6 @@ float ampereL2 = 0;
 float ampereL3 = 0;
 float powerSum = 0;
 float hertz = 0;
-String mtrState = "UNK";
 
 int pin_d2 = 4;
 
@@ -71,10 +71,13 @@ SoftwareSerial MeterSerial(pin_d2, 3, true); // RX, TX, inverted mode(!)
 WiFiClient espClient;
 MQTTPubSub::PubSubClient<512> client;
 
-// #define _debug_msg
-// #define _debug_sml
+#define _debug_msg
 
 void setup() {
+  // OTA setings
+  ArduinoOTA.setHostname("ESP-Power");
+  ArduinoOTA.setPassword("");
+  ArduinoOTA.begin();
 
   tmpStr.reserve(20);
   // bring up serial ports
@@ -116,11 +119,14 @@ void setup_wifi() {
 }
 
 void mqtt_reconnect() {
-  client.disconnect();
+
   // connect to broker again and connect start reconnecting mqtt client
-  espClient.connect(MQTT_BROKER, MQTT_PORT);
+
   while (!client.isConnected()) {
     Serial.println("MQTT disconnected, trigger reconnect.");
+    espClient.connect(MQTT_BROKER, MQTT_PORT);
+    client.begin(espClient);
+
     // generate new client ID
     String clientId = "ESP-Strom-";
     clientId += String(random(0xffff), HEX);
@@ -168,9 +174,6 @@ void parseValues() {
   if (rxID == "1-0:16.7.0*255") {
     powerSum = String(rxBuffer).toFloat();
   }
-  if (rxID == "1-0:96.90.2*255") {
-    mtrState = String(rxBuffer);
-  }
   if (rxID == "0-0:96.1.255*255") {
     mtrModel = String(rxBuffer);
   }
@@ -187,6 +190,7 @@ void outputValues() {
 
 void loop() {
   client.update();
+  ArduinoOTA.handle();
 
   if (MeterSerial.available()) {
     char c = MeterSerial.read();
@@ -206,16 +210,19 @@ void loop() {
     } else {
       rxBuffer[charsRead++] = c;
     }
-    Serial.write(c);
   }
+  //#ifdef _debug_msg
+  //  Serial.write(c);
+  //#endif
+  // publishMessage();
 
-  if (nextOutput < millis()) {
-    outputValues();
-    nextOutput = ( millis() + outputInterval);
-  }
-  if (nextUpload < millis()) {
+  //  if (nextOutput < millis()) {
+  //    outputValues();
+  //    nextOutput = ( millis() + outputInterval);
+  //  }
+  if (nextUpload < millis() - uploadInterval) {
     publishMessage();
-    nextUpload = ( millis() + uploadInterval);
+    nextUpload = millis();
   }
 }
 
@@ -234,6 +241,9 @@ void publishMessage() {
   doc["ampereL3"] = ampereL3;
   doc["hertz"] = hertz;
   doc["mtrID"] = mtrID;
+  doc["freeheap"] = ESP.getFreeHeap();
+  doc["freeblocksize"] = ESP.getMaxFreeBlockSize();
+  doc["heapfragmentation"] = ESP.getHeapFragmentation();
 
 #ifdef _debug_msg
   serializeJsonPretty(doc, Serial);
@@ -241,6 +251,11 @@ void publishMessage() {
 #endif
 
   serializeJson(doc, mqttjson);
+
+  // check WiFi connection before sending
+  if (WiFi.status() != WL_CONNECTED) {
+    setup_wifi();
+  }
 
   // if publish wasn't successful, try to reconnect
   if (!client.publish(mqtt_topic, mqttjson )) {
