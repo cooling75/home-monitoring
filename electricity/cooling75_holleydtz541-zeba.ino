@@ -2,8 +2,8 @@
 /*
     Application note: Read a Holley DTZ541-ZEBA (2021) electricity meter via
     phototransistor + 1k resistor interface and SML protocol
-    Version 1.13 - 18.05.2022
-    Copyright (C) 2022  Jan Laudahn https://laudart.de
+    Version 1.2.2 - 13.02.2023
+    Copyright (C) 2023  Jan Laudahn https://cooling75.github.io
 
     credits:
     - Hartmut Wendt  www.zihatec.de for the code base
@@ -33,12 +33,17 @@
 #include <SoftwareSerial.h>
 #include <MQTTPubSubClient.h>
 #include <ArduinoJson.h>
+#include <ArduinoOTA.h>
 
 // WiFi and MQTT
 const char* SSID = "";
 const char* PSK = "";
 const char* MQTT_BROKER = "";
 const short MQTT_PORT = ;
+const char* mqtt_topic = "";
+const char* mqtt_debug_topic = "";
+const char* mqtt_user = "";
+const char* mqtt_pw = "";
 
 // transmission
 String tmpStr;
@@ -86,6 +91,10 @@ MQTTPubSub::PubSubClient<256> client;
 // #define _debug_sml
 
 void setup() {
+  // OTA setings
+  ArduinoOTA.setHostname("ESP-Strom");
+  ArduinoOTA.setPassword("ESPStrom");
+  ArduinoOTA.begin();
 
   tmpStr.reserve(20);
   // bring up serial ports
@@ -96,10 +105,10 @@ void setup() {
   WiFi.mode(WIFI_STA);
 
   // static ip configuration
-  IPAddress ip(192, 168, 178, 231);
-  IPAddress dns(192, 168, 178, 151);
-  IPAddress gateway(192, 168, 178, 1);
-  IPAddress subnet(255, 255, 255, 0);
+  IPAddress ip(0, 0, 0, 0);
+  IPAddress dns(0, 0, 0, 0);
+  IPAddress gateway(0, 0, 0, 0);
+  IPAddress subnet(255, 255, 0, 0);
   WiFi.config(ip, dns, gateway, subnet);
 
   setup_wifi();
@@ -126,26 +135,25 @@ void setup_wifi() {
 }
 
 void mqtt_reconnect() {
-  client.disconnect();
+
   // connect to broker again and connect start reconnecting mqtt client
-  espClient.connect(MQTT_BROKER, MQTT_PORT);
+
   while (!client.isConnected() && WiFi.status() == WL_CONNECTED) {
     Serial.println("MQTT disconnected, trigger reconnect.");
+    espClient.connect(MQTT_BROKER, MQTT_PORT);
+    client.begin(espClient);
+
     // generate new client ID
     String clientId = "ESP-Strom-";
     clientId += String(random(0xffff), HEX);
     if (client.connect(clientId.c_str())) {
       Serial.println("MQTT connected");
-      client.publish("/home/debug/electricity", "ESP-Strom: reconnected!");
+      client.publish(mqtt_debug_topic, "ESP-Strom: reconnected!");
     } else {
       Serial.println("MQTT connection failed");
       Serial.print("Status: ");
       Serial.println(client.getReturnCode());
       Serial.println("Try again in 5s");
-      failcount++;
-      if (failcount > 12) {
-        ESP.restart();
-      }
       delay(5000);
     }
   }
@@ -153,6 +161,7 @@ void mqtt_reconnect() {
 
 void loop() {
   client.update();
+  ArduinoOTA.handle();
   switch (stage) {
     case 0:
       findStartSequence(); // look for start sequence
@@ -279,6 +288,7 @@ void findPowerSequence() {
       currentpower >>= 8;
     }
   } else {
+    clearbuffers();
     stage = 0; // start over when sequence not found
   }
 }
@@ -324,6 +334,7 @@ void findConsumptionSequence() {
     currentconsumption <<= 8;
     currentconsumption += consumption[3];
   } else {
+    clearbuffers();
     stage = 0; // start over when sequence not found
   }
 }
@@ -360,6 +371,7 @@ void findDeliveredSequence() {
       }
     }
   } else {
+    clearbuffers();
     stage = 0; // start over when sequence not found
   }
 }
@@ -401,6 +413,7 @@ void findUptime() {
     uptimeTotal <<= 8;
     uptimeTotal += uptime[3];
   } else {
+    clearbuffers();
     stage = 0; // start over when sequence not found
   }
 }
@@ -409,32 +422,6 @@ void publishMessage() {
 #ifdef _debug_sml
   debug_sml();
 #endif
-
-
-  // check WiFi connection
-  //  if (WiFi.status() != WL_CONNECTED || !client.isConnected()) {
-  //    Serial.println("WLAN disconnected, trigger reconnect.");
-  //    WiFi.disconnect();
-  //    setup_wifi();
-  //    // when WiFi was reconnected, reconnect MQTT too
-  //    mqtt_reconnect();
-  //  }
-
-  // client.update();
-
-  // debug output
-  //  Serial.print("getFreeHeap: ");
-  //  Serial.println(ESP.getFreeHeap());
-  //  Serial.print("getHeapFragmentation: ");
-  //  Serial.println(ESP.getHeapFragmentation());
-  //  Serial.print("getMaxFreeBlockSize: ");
-  //  Serial.println(ESP.getMaxFreeBlockSize());
-  //  Serial.print("Total consumed: ");
-  //  Serial.println(currentconsumption);
-  //  Serial.print("Total delivered: ");
-  //  Serial.println(deliveredTotal);
-  //  Serial.print("Current power (short): ");
-  //  Serial.println((signed short)currentpower);
 
   doc["consumedDeciWatt"] = currentconsumption;
   doc["deliveredkwh"] = deliveredTotal;
@@ -446,19 +433,32 @@ void publishMessage() {
 
   serializeJson(doc, mqttjson);
 
+  // check WiFi connection before sending
+  if (WiFi.status() != WL_CONNECTED) {
+    setup_wifi();
+  }
+
   // if publish wasn't successful, try to reconnect
-  if (!client.publish("/home/commodity/electricity", mqttjson )) {
+  if (!client.publish( mqtt_topic, mqttjson )) {
     Serial.println("Problems with publish occured...");
     mqtt_reconnect();
   }
+  clearbuffers();
 
-  // clear the buffers
+  //reset case
+  smlIndex = 0;
+  stage = 0; // start over
+}
+
+// clear the buffers
+void clearbuffers () {
+  currentconsumption = 0;
+  deliveredTotal = 0;
+  currentpower = 0;
+  uptimeTotal = 0;
   memset(smlMessage, 0, sizeof(smlMessage));
   memset(power, 0, sizeof(power));
   memset(consumption, 0, sizeof(consumption));
   memset(delivered, 0, sizeof(delivered));
   memset(uptime, 0, sizeof(uptime));
-  //reset case
-  smlIndex = 0;
-  stage = 0; // start over
 }
