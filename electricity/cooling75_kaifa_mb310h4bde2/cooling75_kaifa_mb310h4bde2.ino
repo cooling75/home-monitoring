@@ -2,7 +2,7 @@
 /*
     Application note: Read a KAIFA MB310H4BDE2 electricity meter via
     phototransistor + 1k resistor interface and SML protocol
-    Version 1.0 - 11.04.2024
+    Version 1.1 - 18.04.2024
     Copyright (C) 2024  Jan Laudahn https://laudart.de
 
     credits:
@@ -69,6 +69,7 @@ const byte deliveredSequence[] = { 0x77, 0x07, 0x01, 0x00, 0x02, 0x08, 0x00, 0xF
 const byte vendorSequence[] = { 0x77, 0x07, 0x01, 0x00, 0x60, 0x32, 0x01, 0x01 }; // sequence preceeding the vendor shortname, 6 bytes to 3 byte in ASCII, here "HLY"
 const byte uptimeSequence[] = {0x77, 0x01, 0x0B, 0x09, 0x01, 0x45, 0x53, 0x59, 0x11, 0x03, 0x9C, 0x7B, 0xB6 }; // 12 bytes to 4 byte uptime
 bool foundSequence;
+bool firstRun = true;
 int smlIndex; //index counter within smlMessage array
 int startIndex; //start index for start sequence search
 int stopIndex; //start index for stop sequence search
@@ -91,6 +92,7 @@ int64_t phase1power;
 int64_t phase2power;
 int64_t phase3power;
 uint64_t currentconsumption; //variable to hold translated "Gesamtverbrauch" value
+uint64_t oldconsumption;
 
 int pin_d2 = 4;
 
@@ -360,6 +362,15 @@ void findConsumptionSequence() {
     }
   } else {
     stage = 0; // start over when sequence not found
+  }
+  // add check for feasible value and reset if true
+  // During first run the value for comparing will be set, afterwards smaller values are allowed, but not extensively higher values
+  if (firstRun) {
+    oldconsumption = currentconsumption;
+    firstRun = false;
+  }
+  if (currentconsumption > oldconsumption + 10000) {
+    stage = 0;
   }
 }
 
