@@ -279,6 +279,7 @@ void findStopSequence() {
 
 void findPowerSequence() {
   foundSequence = false;
+  currentpower = 0; //reset accumulator, otherwise it keeps building on the previous cycle's value
   byte temp; //temp variable to store loop search data
   startIndex = 0; //start at position 0 of exctracted SML message
   for (int x = 0; x < sizeof(smlMessage); x++) { //for as long there are element in the exctracted SML message
