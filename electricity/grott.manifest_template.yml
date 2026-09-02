@@ -4,7 +4,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  namespace: home-mon
+  namespace: <your namespace>
   name: grott
 spec:
   selector:
@@ -28,7 +28,7 @@ spec:
             memory: "8Mi"
         env:
         - name: gmqttip
-          value: "192.168.178.153"
+          value: "<your mqtt broker ip>"
         - name: ggrowattip
           value: "47.254.130.145"
 
@@ -38,7 +38,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  namespace: home-mon
+  namespace: <your namespace>
   name: grott-svc
 spec:
   selector:
