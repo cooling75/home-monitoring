@@ -46,7 +46,7 @@ const char* mqtt_user = "";
 const char* mqtt_pw = "";
 
 // transmission
-// String tmpStr;
+String tmpStr;
 StaticJsonDocument<256> doc;
 char mqttjson[256];
 
@@ -110,10 +110,9 @@ void setup() {
   ArduinoOTA.setPassword("MyPassword");
   ArduinoOTA.begin();
 
-  // tmpStr.reserve(20);
+  tmpStr.reserve(20);
   // bring up serial ports
   Serial.begin(115200);   // debug via USB
-  MeterSerial.begin(9600);  // meter via RS485
   WiFi.setAutoConnect(true);
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
   WiFi.mode(WIFI_STA);
@@ -126,10 +125,14 @@ void setup() {
   WiFi.config(ip, dns, gateway, subnet);
 
   setup_wifi();
+  delay(300); // let the WiFi/TCP stack settle before the first blocking connect
   espClient.connect(MQTT_BROKER, MQTT_PORT);
   client.begin(espClient);
   client.setCleanSession(true);
   mqtt_reconnect();
+  // start the meter's SoftwareSerial (interrupt-driven bit-banging) only after
+  // WiFi/MQTT bring-up, so its ISR load can't starve the SDK during that window
+  MeterSerial.begin(9600);  // meter via RS485
   Serial.println("Starting loop");
 }
 
@@ -152,6 +155,7 @@ void mqtt_reconnect() {
 
   while (!client.isConnected()) {
     Serial.println("MQTT disconnected, trigger reconnect.");
+    espClient.stop(); // release any previous socket/PCB before opening a new one
     espClient.connect(MQTT_BROKER, MQTT_PORT);
     client.begin(espClient);
 
@@ -165,7 +169,10 @@ void mqtt_reconnect() {
       Serial.println("MQTT connection failed");
       Serial.print("Status: ");
       Serial.println(client.getReturnCode());
+      Serial.print("Free heap: ");
+      Serial.println(ESP.getFreeHeap());
       Serial.println("Try again in 5s");
+      ArduinoOTA.handle();
       delay(5000);
     }
   }
@@ -420,49 +427,49 @@ void findDeliveredSequence() {
   }
 }
 
-// void findUptime() {
-//   foundSequence = false;
-//   byte temp;
-//   startIndex = 0;
-//   for (int x = 0; x < sizeof(smlMessage); x++) {
-//     temp = smlMessage[x];
-//     if (temp == uptimeSequence[startIndex]) {
-//       startIndex++;
-//       if (startIndex == sizeof(uptimeSequence)) {
-// #ifdef _debug_msg
-//         Serial.println("Match found - Uptime Sequence:");
-// #endif
-//         for (int y = 0; y < 4; y++) {
-//           uptime[y] = smlMessage[x + y + 12];
-// #ifdef _debug_msg
-//           Serial.print(String(uptime[y], HEX));
-//           Serial.print(" ");
-// #endif
-//         }
-// #ifdef _debug_msg
-//         Serial.println();
-// #endif
-//         startIndex = 0;
-//         stage = 6;
-//         foundSequence = true;
-//       }
-//     } else {
-//       startIndex = 0;
-//     }
-//   }
-//   // combine to uptimeTotal
-//   if (foundSequence) {
-//     uptimeTotal = uptime[0];
-//     uptimeTotal <<= 8;
-//     uptimeTotal += uptime[1];
-//     uptimeTotal <<= 8;
-//     uptimeTotal += uptime[2];
-//     uptimeTotal <<= 8;
-//     uptimeTotal += uptime[3];
-//   } else {
-//     stage = 0; // start over when sequence not found
-//   }
-// }
+void findUptime() {
+  foundSequence = false;
+  byte temp;
+  startIndex = 0;
+  for (int x = 0; x < sizeof(smlMessage); x++) {
+    temp = smlMessage[x];
+    if (temp == uptimeSequence[startIndex]) {
+      startIndex++;
+      if (startIndex == sizeof(uptimeSequence)) {
+#ifdef _debug_msg
+        Serial.println("Match found - Uptime Sequence:");
+#endif
+        for (int y = 0; y < 4; y++) {
+          uptime[y] = smlMessage[x + y + 12];
+#ifdef _debug_msg
+          Serial.print(String(uptime[y], HEX));
+          Serial.print(" ");
+#endif
+        }
+#ifdef _debug_msg
+        Serial.println();
+#endif
+        startIndex = 0;
+        stage = 6;
+        foundSequence = true;
+      }
+    } else {
+      startIndex = 0;
+    }
+  }
+  // combine to uptimeTotal
+  if (foundSequence) {
+    uptimeTotal = uptime[0];
+    uptimeTotal <<= 8;
+    uptimeTotal += uptime[1];
+    uptimeTotal <<= 8;
+    uptimeTotal += uptime[2];
+    uptimeTotal <<= 8;
+    uptimeTotal += uptime[3];
+  } else {
+    stage = 0; // start over when sequence not found
+  }
+}
 
 //void findPhase1Power() {
 //  foundSequence = false;
@@ -533,7 +540,6 @@ void publishMessage() {
   // check WiFi connection before sending
   if (WiFi.status() != WL_CONNECTED) {
     setup_wifi();
-    mqtt_reconnect();
   }
 
   // if publish wasn't successful, try to reconnect
