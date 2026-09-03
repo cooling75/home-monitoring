@@ -1,17 +1,17 @@
 # home-monitoring
 
-Project to monitor electricity, water and natural gas consumption. Hardware is a D1Mini ESP8266 microcontroller development board for electricity and gas, water would be based on the ESP32-CAM board.
+Project to monitor electricity and natural gas consumption. Hardware is a D1Mini ESP8266 microcontroller development board.
 
 ![Grafana electricity dashboard](img/grafana_electricity.png)
-
-We have a small (max. 600 W) solar power plant on our balcony. So the negative consumption and the 'self produced breakdown' as well as the other data on the right comes from this. Luckily there is a very nice project for our inverter called [grott](https://github.com/johanmeijer/grott). So we get the data directly via MQTT in our local network.
 
 ## Commodities
 
 ### Electricity
 
-Currently code for power meters 'Holleytech DTZ 541-ZEBA' (2021) and 'Easymeter Q3MA' is available.
+Currently code for power meters 'Holleytech DTZ 541-ZEBA' (2021), 'Easymeter Q3MA' and 'Kaifa MB310H4BDE2' is available.
 For the Holleytech the date/version is important since the SML byte order has changed from 2019 to 2021 version.
+(The Holleytech power meters seems to have serious problems in terms of quality. The diode of our power meter died at some point and we
+didn't get data anymore.)
 
 #### Sensor
 
@@ -39,7 +39,7 @@ The sensor is a simple reed switch or reed contact. The last number on the meter
 
 ### Water
 
-Not started yet.
+~~Not started yet.~~ -> [Don't reinvent the wheel!](https://github.com/jomjol/AI-on-the-edge-device)
 
 ## Data processing
 
@@ -48,6 +48,7 @@ My approach is completely based on a K3s cluster on Raspberry Pis (because it is
 ```mermaid
 graph LR;
 A(ESP8266)-->|MQTT| B(mosquitto MQTT broker on K3s);
+B-->|MQTT| E(Home Assistant);
 B-->|telegraf| C(InfluxDB);
 C --> D(Grafana dashboard)
 ```
