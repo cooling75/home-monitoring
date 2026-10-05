@@ -6,3 +6,4 @@ electricity/grott.manifest.yml
 esphome/secrets.yaml
 .esphome/
 secrets.h
+electricity/cooling75_efr_sgm_d4-a920n/efr_stromzählerrohdaten.txt
